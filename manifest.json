@@ -1,0 +1,4 @@
+{ "name": "SH تسعير الشيش الحصيرة", "short_name": "SH تسعير", "lang": "ar", "dir": "rtl",
+  "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#f4f3ef", "theme_color": "#34383d",
+  "icons": [ { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+             { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" } ] }

@@ -1,0 +1,23 @@
+{
+  "type": "sh-pricing-prices",
+  "formatVersion": 1,
+  "appVersion": "1.0.0",
+  "exportedAt": "2026-11-07T07:19:41.354Z",
+  "computer": "SH",
+  "overrides": {},
+  "settings": {
+    "wDed": 0.11,
+    "hDed": 0.1,
+    "chDed": 0.1,
+    "nCh": 2,
+    "nBr": 4,
+    "wLim": 38,
+    "widLim": 4,
+    "nFac": 1.3,
+    "mShort": 0.6,
+    "mMin": 20,
+    "mMode": "بالوزن",
+    "t7w": 2.9,
+    "t7bar": 5.8
+  }
+}
