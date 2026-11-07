@@ -274,6 +274,21 @@ tr.disc td { color: var(--ok); font-weight: 600; }
       <button type="button" id="qmDetail" aria-pressed="false">تفصيل كل فتحة</button>
     </div>
     <div id="quoteBanner"></div>
+    <div class="panel" id="svcPanel">
+      <h3>خدمات (بتظهر في آخر الفاتورة)</h3>
+      <div class="disc-row">
+        <div><label class="tog" style="border:0;padding:0"><input type="checkbox" id="svcAsmOn"> <b>تجميع الشغل للعميل</b></label><div class="note">بالفتحة – السعر من قائمة الأسعار، وتقدر تكتب سعر مختلف للأوردر ده</div></div>
+        <div class="note">ج / فتحة</div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="svcAsmPrice" aria-label="سعر التجميع للفتحة">
+        <div class="num disc-res" id="svcAsmTotal"></div>
+      </div>
+      <div class="disc-row">
+        <div><b>أعمال دهانات للغير</b><div class="note">لو العميل طالب ألوان خاصة: اكتب المبلغ وتفاصيل اللون</div></div>
+        <div class="note">جنيه</div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="svcPaintAmt" aria-label="مبلغ أعمال الدهانات">
+        <input type="text" autocomplete="off" id="svcPaintNote" placeholder="مثلاً: لون 8017 بني" aria-label="تفاصيل الدهان" style="background:var(--field);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:40px;width:100%">
+      </div>
+    </div>
     <div class="panel" id="discPanel">
       <h3>الخصومات (اختيارية)</h3>
       <p class="note">كل خصم مستقل: خصم الشرائح بيأثر على الشرائح بس، والعلب على البوكس بس، والمواتير على الموتور وإكسسواره بس. الخصم الإضافي بيتطبّق على الإجمالي بعدهم. سيب الخانة فاضية أو صفر = مفيش خصم.</p>
@@ -627,7 +642,7 @@ const PL1 = "ليستة – الشرائح", PL2 = "ليستة – العلب و
 
 const DEFAULT_SETTINGS = {
   wDed: 0.11, hDed: 0.10, chDed: 0.10, nCh: 2, nBr: 4, wLim: 38, widLim: 4, nFac: 1.3,
-  mShort: 0.60, mMin: 20, mMode: "بالوزن", t7w: 2.9, t7bar: 5.8
+  mShort: 0.60, mMin: 20, mMode: "بالوزن", t7w: 2.9, t7bar: 5.8, hgStep: 0.5
 };
 const SETTING_META = [
   ["wDed", "خصم عرض الحصيرة من عرض الفتحة", "م"], ["hDed", "خصم ارتفاع الحصيرة من ارتفاع الفتحة", "م"],
@@ -636,7 +651,7 @@ const SETTING_META = [
   ["widLim", "طنبور 7 لو عرض الفتحة أكبر من", "م"], ["nFac", "معامل الوزن: الحمل = الوزن ÷", ""],
   ["mShort", "ميلانو 10 نيوتن قصير لعرض فتحة حتى", "م"], ["mMin", "أقل حمل لميلانو فوق العرض ده", "نيوتن"],
   ["mMode", "طريقة اختيار حمل ميلانو فوق 60 سم", ""], ["t7w", "طنبور 7: عود كامل لو عرض الفتحة أكبر من", "م"],
-  ["t7bar", "طنبور 7: طول العود الكامل", "م"]
+  ["t7bar", "طنبور 7: طول العود الكامل", "م"], ["hgStep", "المسافة بين العلاقات على الطنبور", "م"]
 ];
 
 // base type, foam -> item
@@ -688,7 +703,7 @@ function buildPrices() {
   add("CH-N-SPC", "مجرى 8 سم عادي (وسط) – دهانات مختلفة", "م طولي", 385, PL3, "open", "الطنابير والمجاري والفرش");
   add("CH-W-SPC", "مجرى 8 سم عريض – دهانات مختلفة", "م طولي", 405, PL3, "open", "الطنابير والمجاري والفرش");
   add("BR-57", "فرش مجاري 5×7", "م طولي", 5, "سعر من SH (نوفمبر 2026)", "open", "الطنابير والمجاري والفرش");
-  add("X-BOXBR", "فرش البوكس 7×20", "م طولي", 12, PL2 + " – في الفتحة حصر بس، سعره داخل البوكس بفرش", "takeoff", "الطنابير والمجاري والفرش");
+  add("X-BOXBR", "فرش البوكس 7×20", "م طولي", 11, "سعر من SH (نوفمبر 2026) – الليستة 12", "open", "الطنابير والمجاري والفرش");
   const bx = { STD: [585, 640, 800, 1010, 1100, 1355], SPC: [705, 760, 920, 1130, 1220, 1475] };
   for (const g of ["STD", "SPC"]) BOX_SIZES.forEach((s, i) => add(`BX-${s}-${g}`, `بوكس SH Ultra ${s} سم بفرش – ${g === "STD" ? "أبيض – بيج" : "دهانات مختلفة"}`, "م طولي", bx[g][i], PL2, "open", "البوكس والأجناب"));
   const sd = { STD: [185, 221, 296, 452, 582], SPC: [245, 281, 356, 512, 642] };
@@ -718,15 +733,20 @@ function buildPrices() {
   add("X-MCR50", "ميلانو Crank with Handle 50N", "قطعة", 5305, MILS, "solo", "الموتورات");
   add("CUP-6", "كباية شفت 6 سم", "قطعة", 55, PL3, "open", "الإكسسوارات");
   add("CUP-7", "كباية شفت 7 سم", "قطعة", null, "الليستة فيها كباية 6 سم بس", "open", "الإكسسوارات");
+  add("X-H17", "علاقة 17 سم", "قطعة", 30, PL3, "open", "الإكسسوارات");
+  add("X-RG6", "رينج 6 سم", "قطعة", 9, PL3, "open", "الإكسسوارات");
+  add("X-RG7", "رينج 7 سم", "قطعة", 11, PL3, "open", "الإكسسوارات");
+  add("X-TA7", "طقم إكسسوار أحمال (بوكس 30)", "طقم", 266, "سعر من SH (نوفمبر 2026) – الليستة 265", "open", "الإكسسوارات");
+  add("AD-7", "تحويلة 7 سم (لتركيب الموتور)", "قطعة", 250, "سعر من SH (نوفمبر 2026)", "open", "الإكسسوارات");
+  add("SRV-ASM", "تجميع (خدمة) – للفتحة", "فتحة", 150, "سعر من SH – يتعدل في كل أوردر", "service", "خدمات");
   add("RR", "ريموت + ريسيفر", "طقم", null, "مش موجود كبند واحد – سومفي: ريموت 1 قناة 2956، 4 قناة 4007، ريسيفر io 6735", "open", "الإكسسوارات");
   add("SW-SCH", "طقم مفتاح شنايدر", "طقم", 600, PL3, "open", "الإكسسوارات");
   const solo = [["X-MW6", "ويل 6 سم (ميلانو)", "قطعة", 25, MILS], ["X-MK6", "كراون 6 سم (ميلانو)", "قطعة", 25, MILS], ["X-MB6", "براكيت 6 سم (ميلانو)", "قطعة", 100, MILS],
     ["X-MW7", "ويل 7 سم (ميلانو)", "قطعة", 45, MILS], ["X-MK7", "كراون 7 سم (ميلانو)", "قطعة", 45, MILS], ["X-MKI", "كراون داخلي 6-7 سم", "قطعة", 50, MILS],
     ["X-MARM", "دراع منافلة", "قطعة", 1550, MILS], ["X-R1", "ريموت سومفي 1 قناة", "قطعة", 2956, SOMS], ["X-R4", "ريموت سومفي 4 قناة", "قطعة", 4007, SOMS],
     ["X-RIO", "ريسيفر سومفي io In Wall", "قطعة", 6735, SOMS], ["X-BRG", "رومان بلي لأجل كباية 6 سم", "قطعة", 22, PL3],
-    ["X-H13", "علاقة 13 سم", "قطعة", 25, PL3], ["X-H17", "علاقة 17 سم", "قطعة", 30, PL3], ["X-H19", "علاقة 19 سم", "قطعة", 42, PL3],
-    ["X-RG6", "رينج 6 سم", "قطعة", 9, PL3], ["X-RG7", "رينج 7 سم", "قطعة", 11, PL3],
-    ["X-TA6", "طقم إكسسوار طنبور معدن 6 سم", "طقم", 90, PL3], ["X-TA7", "طقم إكسسوار طنبور معدن أحمال 7 سم", "طقم", 265, PL3],
+    ["X-H13", "علاقة 13 سم", "قطعة", 25, PL3], ["X-H19", "علاقة 19 سم", "قطعة", 42, PL3],
+    ["X-TA6", "طقم إكسسوار طنبور معدن 6 سم", "طقم", 90, PL3],
     ["X-SPM", "طقم زمبلك خارجي وسط بالشريط", "طقم", 523, PL3], ["X-SPMB", "علبة زمبلك خارجي وسط بالشريط", "طقم", 325, PL3],
     ["X-SPBB", "علبة زمبلك خارجي كبير بالشريط", "طقم", 405, PL3], ["X-SWM", "طقم مفتاح مالديني", "طقم", 295, PL3]];
   for (const [k, n, u, v, s] of solo) add(k, n, u, v, s, "solo", "الإكسسوارات");
@@ -772,7 +792,7 @@ function computeOpening(op, prices, S) {
       else { const need = Math.max(S.mMin, req); motorN = loads.find(n => n >= need - 1e-9) ?? null; }
     } else motorN = loads.find(n => n >= req - 1e-9) ?? null;
   }
-  Object.assign(out, { W, H, mw, mh, area, weight, tube, tubeLen, autoBox, box, wex, hex, ovr, chLen, brLen, req, motorN, grp, boxBrush: box != null ? W * 2 : 0 });
+  Object.assign(out, { W, H, mw, mh, area, weight, tube, tubeLen, autoBox, box, wex, hex, ovr, chLen, brLen, req, motorN, grp });
   const L = (comp, key, qty) => {
     let unitPrice, total;
     if (!(key in prices)) { unitPrice = "غير موجود"; total = "غير موجود"; }
@@ -780,15 +800,21 @@ function computeOpening(op, prices, S) {
     else { unitPrice = prices[key]; total = qty * prices[key]; }
     out.lines.push({ comp, key, qty, unitPrice, total });
   };
+  const hangers = W > 0 ? Math.ceil(W / S.hgStep - 1e-9) + 1 : 0; // one at each end + one every hgStep along the tube
   L("شرائح", `SL-${it.code}-${grp}`, area);
   if (box != null) {
     L("بوكس", `BX-${box}-${grp}`, W);
+    L("فرش بوكس", "X-BOXBR", W * 2);
     L("جنب", box === 30 ? `SD-30-L-${grp}` : `SD-${box}-N-${grp}`, 1);
+    if (box === 30) L("إكسسوار أحمال", "X-TA7", 1);
   }
   L("طنبور", `TB-${tube}`, tubeLen);
+  if (hangers) L("علاقات", "X-H17", hangers);
+  if (hangers && (it.code === "SHD" || it.code === "AER")) L("رينجات", `X-RG${tube}`, hangers);
   L("مجاري", `CH-${it.ch}-${grp}`, chLen);
   L("فرش", "BR-57", brLen);
   if (isMot && motorN != null) L("موتور", `MT-${MOTOR_CODE[opType]}-${motorN}`, 1);
+  if (isMot && tube === 7) L("تحويلة", "AD-7", 1);
   if (opType === "سومفي" || opType === "سومفي io") L("إكسسوار", `AC-SOM-${tube}`, 1);
   if (opType === "طقم شريط") L("إكسسوار", "ST-BIG", 1);
   L("كباية", `CUP-${tube}`, 1);
@@ -958,13 +984,24 @@ function calcAll() {
     const p = PBY[s.key]; const pr = prices[s.key];
     return { ...s, name: p ? p.name : s.key, unit: p ? p.unit : "", unitPrice: pr == null ? "غير مسجل" : pr, total: pr == null ? "غير مسجل" : +s.qty * pr };
   });
-  const total = results.reduce((a, r) => a + (r.item ? r.total : 0), 0) + soloRows.reduce((a, s) => a + (typeof s.total === "number" ? s.total : 0), 0);
-  const allLines = [...results.flatMap(r => r.item ? r.lines : []), ...soloRows.map(s => ({ key: s.key, total: s.total }))];
+  // services at the bottom of the invoice (SH office only): assembly per opening (optional, editable price) and painting for others (manual amount)
+  const svc = order.services || {};
+  const nOpen = results.filter(r => r.item).length;
+  const serviceRows = [];
+  if (!IS_CUSTOMER && svc.asm && svc.asm.on && nOpen) {
+    const up = typeof svc.asm.price === "number" ? svc.asm.price : prices["SRV-ASM"];
+    serviceRows.push({ key: "SRV-ASM", name: "تجميع الشغل (خدمة)", qty: nOpen, unit: "فتحة", unitPrice: up == null ? "غير مسجل" : up, total: up == null ? "غير مسجل" : nOpen * up });
+  }
+  if (!IS_CUSTOMER && svc.paint && +svc.paint.amount > 0)
+    serviceRows.push({ key: "SRV-PAINT", name: "أعمال دهانات للغير" + (svc.paint.note ? " – " + svc.paint.note : ""), qty: 1, unit: "", unitPrice: +svc.paint.amount, total: +svc.paint.amount });
+  const total = results.reduce((a, r) => a + (r.item ? r.total : 0), 0) + soloRows.reduce((a, s) => a + (typeof s.total === "number" ? s.total : 0), 0)
+    + serviceRows.reduce((a, s) => a + (typeof s.total === "number" ? s.total : 0), 0);
+  const allLines = [...results.flatMap(r => r.item ? r.lines : []), ...soloRows.map(s => ({ key: s.key, total: s.total })), ...serviceRows.map(s => ({ key: s.key, total: s.total }))];
   const disc = computeDiscounts(allLines, total, order.discounts);
-  return { prices, results, soloRows, total, disc, net: disc.net, status: orderStatus(results, soloRows) };
+  return { prices, results, soloRows, serviceRows, total, disc, net: disc.net, status: orderStatus(results, [...soloRows, ...serviceRows]) };
 }
 function lineName(l) { const p = PBY[l.key]; return p ? p.name : l.key; }
-const COMP_LABEL = { "شرائح": "الحصيرة", "بوكس": "البوكس", "جنب": "طقم أجناب البوكس", "طنبور": "الطنبور", "مجاري": "المجرى يمين + شمال", "فرش": "فرش المجاري (4 قطع)", "موتور": "الموتور", "إكسسوار": "التشغيل", "كباية": "كباية الشفت", "ريموت": "ريموت + ريسيفر", "مفتاح": "مفتاح شنايدر" };
+const COMP_LABEL = { "فرش بوكس": "فرش البوكس 7×20", "إكسسوار أحمال": "طقم إكسسوار أحمال", "علاقات": "العلاقات", "رينجات": "الرينجات", "تحويلة": "تحويلة 7 سم", "شرائح": "الحصيرة", "بوكس": "البوكس", "جنب": "طقم أجناب البوكس", "طنبور": "الطنبور", "مجاري": "المجرى يمين + شمال", "فرش": "فرش المجاري (4 قطع)", "موتور": "الموتور", "إكسسوار": "التشغيل", "كباية": "كباية الشفت", "ريموت": "ريموت + ريسيفر", "مفتاح": "مفتاح شنايدر" };
 function quoteLines(r) {
   const out = []; let mot = null, acc = null;
   for (const l of r.lines) {
@@ -975,7 +1012,7 @@ function quoteLines(r) {
     const parts = [mot, acc].filter(Boolean);
     const allNum = parts.every(p => typeof p.total === "number");
     const val = allNum ? parts.reduce((s, p) => s + p.total, 0) : (parts.some(p => p.total === "غير موجود") ? "غير موجود" : "غير مسجل");
-    const idx = out.findIndex(l => l.comp === "كباية");
+    let idx = out.findIndex(l => l.comp === "تحويلة"); if (idx < 0) idx = out.findIndex(l => l.comp === "كباية");
     out.splice(idx < 0 ? out.length : idx, 0, { key: parts.map(p => p.key).join("+"), label: mot ? "الموتور (شامل الإكسسوار)" : "طقم الشريط", name: parts.map(lineName).join(" + "), qty: 1, unit: mot ? "قطعة" : "طقم", unitPrice: val, total: val, comp: "موتور" });
   }
   return out;
@@ -1059,7 +1096,7 @@ function quoteMode() { return order.quoteMode === "detail" ? "detail" : "sum"; }
 function quoteModel(calc) {
   const rows = [];
   if (quoteMode() === "sum") {
-    const ORDER = ["شرائح", "بوكس", "جنب", "طنبور", "مجاري", "فرش", "موتور", "كباية", "ريموت", "مفتاح"];
+    const ORDER = ["شرائح", "بوكس", "فرش بوكس", "جنب", "إكسسوار أحمال", "طنبور", "علاقات", "رينجات", "مجاري", "فرش", "موتور", "تحويلة", "كباية", "ريموت", "مفتاح"];
     const agg = new Map();
     const add = (key, comp, text, unit, up, qty) => {
       if (!agg.has(key)) agg.set(key, { key, comp, text, unit, up, qty: 0, rank: ORDER.indexOf(comp) < 0 ? 99 : ORDER.indexOf(comp), seq: agg.size });
@@ -1083,6 +1120,10 @@ function quoteModel(calc) {
       for (const s of calc.soloRows) rows.push({ t: "ln", key: s.key, text: s.name, qty: +s.qty, unit: s.unit, up: s.unitPrice, tot: s.total });
       rows.push({ t: "sub", text: "إجمالي الخامات المنفردة", tot: calc.soloRows.reduce((a, s) => a + (typeof s.total === "number" ? s.total : 0), 0) });
     }
+  }
+  if (calc.serviceRows.length) {
+    rows.push({ t: "hd", text: "خدمات" });
+    for (const s of calc.serviceRows) rows.push({ t: "ln", key: s.key, text: s.name, qty: s.qty, unit: s.unit, up: s.unitPrice, tot: s.total });
   }
   const D = calc.disc;
   if (D.totalDiscount > 0) {
@@ -1156,7 +1197,26 @@ function renderQuote(calc) {
       <input type="text" inputmode="decimal" autocomplete="off" data-mk="${m.key}" placeholder="اكتب السعر" aria-label="سعر ${esc(m.name)}" value="${esc(open[m.key] || "")}"></div>`).join("");
   }
   renderDiscounts(calc);
+  renderServices(calc);
   $("#quoteDoc").innerHTML = quoteHTML(calc);
+}
+function renderServices(calc) {
+  $("#svcPanel").hidden = IS_CUSTOMER;
+  if (IS_CUSTOMER) return;
+  const svc = order.services || {};
+  const asm = svc.asm || {}, paint = svc.paint || {};
+  const def = calc.prices["SRV-ASM"];
+  const n = calc.results.filter(r => r.item).length;
+  if (document.activeElement && document.activeElement.closest && document.activeElement.closest("#svcPanel")) { // keep typing undisturbed
+    $("#svcAsmTotal").textContent = asm.on ? `${n} فتحة × ${fmt(typeof asm.price === "number" ? asm.price : def)} = ${fmt(n * (typeof asm.price === "number" ? asm.price : (def || 0)))}` : "";
+    return;
+  }
+  $("#svcAsmOn").checked = !!asm.on;
+  $("#svcAsmPrice").value = typeof asm.price === "number" ? asm.price : "";
+  $("#svcAsmPrice").placeholder = def == null ? "اكتب السعر" : String(def);
+  $("#svcAsmTotal").textContent = asm.on ? `${n} فتحة × ${fmt(typeof asm.price === "number" ? asm.price : def)} = ${fmt(n * (typeof asm.price === "number" ? asm.price : (def || 0)))}` : "";
+  $("#svcPaintAmt").value = paint.amount || "";
+  $("#svcPaintNote").value = paint.note || "";
 }
 function renderDiscounts(calc) {
   const dd = order.discounts || {};
@@ -1262,7 +1322,7 @@ async function openQuote(id, asCopy) {
 function renderTakeoff(calc) {
   const agg = {};
   const addQ = (key, q) => { agg[key] = (agg[key] || 0) + q; };
-  calc.results.forEach(r => { if (!r.item) return; r.lines.forEach(l => addQ(l.key, l.qty)); if (r.boxBrush) addQ("X-BOXBR", r.boxBrush); });
+  calc.results.forEach(r => { if (!r.item) return; r.lines.forEach(l => addQ(l.key, l.qty)); });
   calc.soloRows.forEach(s => addQ(s.key, +s.qty));
   const keys = PRICE_LIST.map(p => p.key).filter(k => agg[k] > 0);
   $("#takeoffTbl").innerHTML = keys.length ? `<thead><tr><th>الخامة</th><th>الكمية</th><th>الوحدة</th></tr></thead><tbody>` +
@@ -1482,6 +1542,16 @@ $("#discRows").addEventListener("input", e => {
   order.discounts[k] = { type: (order.discounts[k] && order.discounts[k].type) || "pct", v: v === "" ? "" : v };
   changed(); clearTimeout(discTimer); discTimer = setTimeout(render, 400);
 });
+function svcEdit() {
+  order.services = order.services || {};
+  const p = toNum($("#svcAsmPrice").value);
+  order.services.asm = { on: $("#svcAsmOn").checked, price: p === "" ? null : p };
+  const a = toNum($("#svcPaintAmt").value);
+  order.services.paint = { amount: a === "" ? "" : a, note: $("#svcPaintNote").value.trim() };
+  changed(); clearTimeout(discTimer); discTimer = setTimeout(render, 400);
+}
+$("#svcPanel").addEventListener("input", svcEdit);
+$("#svcPanel").addEventListener("change", svcEdit);
 $("#discClear").onclick = () => { order.discounts = {}; changed(); render(); toast("اتشالت كل الخصومات"); };
 $("#qmSum").onclick = () => { order.quoteMode = "sum"; changed(); render(); };
 $("#qmDetail").onclick = () => { order.quoteMode = "detail"; changed(); render(); };
