@@ -1,5 +1,5 @@
 /* SH customer app – works offline after the first visit. Prices: network first, so updates arrive as soon as there is internet. */
-const CACHE = "sh-pricing-1.0.0-20261107141122";
+const CACHE = "sh-pricing-1.0.0-20261108234618";
 const FILES = ["./", "index.html", "manifest.json", "icon-192.png", "icon-512.png", "prices.shprices"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

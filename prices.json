@@ -2,7 +2,7 @@
   "type": "sh-pricing-prices",
   "formatVersion": 1,
   "appVersion": "1.0.0",
-  "exportedAt": "2026-11-07T12:11:22.080Z",
+  "exportedAt": "2026-11-08T21:46:18.946Z",
   "computer": "SH",
   "overrides": {},
   "settings": {
@@ -19,6 +19,6 @@
     "mMode": "بالوزن",
     "t7w": 2.9,
     "t7bar": 5.8,
-    "hgStep": 0.5
+    "hgPerM": 3
   }
 }
