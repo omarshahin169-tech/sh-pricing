@@ -252,6 +252,8 @@ tr.disc td { color: var(--ok); font-weight: 600; }
     <div class="adds">
       <button class="btn primary" id="addOp" type="button">+ إضافة فتحة</button>
       <button class="btn" id="addSolo" type="button">+ خامة تتباع لوحدها</button>
+      <button class="btn" id="importXlsx" type="button">استيراد فتحات من Excel</button>
+      <input type="file" id="xlsxFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       <button class="btn primary" id="saveQuote" type="button">حفظ العرض</button>
       <a class="btn" href="#quote" style="text-decoration:none">عرض السعر ←</a>
       <button class="btn ghost danger" id="newOrder" type="button">أوردر جديد</button>
@@ -1066,18 +1068,27 @@ function modal(title, bodyHTML, buttons) {
 }
 
 // ---------------- calculation ----------------
+// an opening row can stand for several identical openings ("العدد"): the engine prices one, then every line is multiplied
+const opQty = o => { const q = Math.floor(+o.qty); return q >= 1 ? q : 1; };
+function scaleOp(r, q) {
+  r.qty = q; r.unitTotal = r.total;
+  if (q === 1 || !r.item) return r;
+  r.lines = r.lines.map(l => ({ ...l, qty: l.qty * q, total: typeof l.total === "number" ? l.total * q : l.total }));
+  r.total = r.total * q;
+  return r;
+}
 function calcAll() {
   const prices = effPrices();
   const mg = IS_CUSTOMER && company && +company.margin > 0 ? 1 + company.margin / 100 : 1;
   if (mg !== 1) for (const k of Object.keys(prices)) if (typeof prices[k] === "number") prices[k] = Math.round(prices[k] * mg * 100) / 100;
-  const results = order.openings.map(o => computeOpening(o, prices, settings));
+  const results = order.openings.map(o => scaleOp(computeOpening(o, prices, settings), opQty(o)));
   const soloRows = order.solo.filter(s => s.key && +s.qty > 0).map(s => {
     const p = PBY[s.key]; const pr = prices[s.key];
     return { ...s, name: p ? p.name : s.key, unit: p ? p.unit : "", unitPrice: pr == null ? "غير مسجل" : pr, total: pr == null ? "غير مسجل" : +s.qty * pr };
   });
   // services at the bottom of the invoice (SH office only): assembly per opening (optional, editable price) and painting for others (manual amount)
   const svc = order.services || {};
-  const nOpen = results.filter(r => r.item).length;
+  const nOpen = results.reduce((a, r) => a + (r.item ? r.qty : 0), 0);
   const serviceRows = [];
   if (!IS_CUSTOMER && svc.asm && svc.asm.on && nOpen) {
     const up = typeof svc.asm.price === "number" ? svc.asm.price : prices["SRV-ASM"];
@@ -1104,13 +1115,14 @@ function quoteLines(r) {
     const allNum = parts.every(p => typeof p.total === "number");
     const val = allNum ? parts.reduce((s, p) => s + p.total, 0) : (parts.some(p => p.total === "غير موجود") ? "غير موجود" : "غير مسجل");
     let idx = out.findIndex(l => l.comp === "تحويلة"); if (idx < 0) idx = out.findIndex(l => l.comp === "كباية");
-    out.splice(idx < 0 ? out.length : idx, 0, { key: parts.map(p => p.key).join("+"), label: mot ? "الموتور (شامل الإكسسوار)" : "طقم الشريط", name: parts.map(lineName).join(" + "), qty: 1, unit: mot ? "قطعة" : "طقم", unitPrice: val, total: val, comp: "موتور" });
+    const q = r.qty || 1;
+    out.splice(idx < 0 ? out.length : idx, 0, { key: parts.map(p => p.key).join("+"), label: mot ? "الموتور (شامل الإكسسوار)" : "طقم الشريط", name: parts.map(lineName).join(" + "), qty: q, unit: mot ? "قطعة" : "طقم", unitPrice: typeof val === "number" ? val / q : val, total: val, comp: "موتور" });
   }
   return out;
 }
 function linesTable(r) {
   const rows = quoteLines(r).map(l => `<tr><td>${esc(l.label)}<div class="note">${esc(l.name)}</div></td><td class="n">${fmt(l.qty)} ${esc(l.unit)}</td><td class="n ${typeof l.unitPrice === "number" ? "" : "miss"}">${fmt(l.unitPrice)}</td><td class="n ${typeof l.total === "number" ? "" : "miss"}">${fmt(l.total)}</td></tr>`).join("");
-  return `<div class="tbl-wrap"><table><thead><tr><th>البند</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${rows}<tr class="sub"><td colspan="3">إجمالي الفتحة</td><td class="n">${fmt(r.total)}</td></tr></tbody></table></div>`;
+  return `<div class="tbl-wrap"><table><thead><tr><th>البند</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${rows}<tr class="sub"><td colspan="3">${r.qty > 1 ? `إجمالي ${r.qty} فتحات (الفتحة الواحدة ${fmt(r.unitTotal)})` : "إجمالي الفتحة"}</td><td class="n">${fmt(r.total)}</td></tr></tbody></table></div>`;
 }
 
 // ---------------- order page ----------------
@@ -1134,12 +1146,14 @@ function renderOrder(calc) {
     const alerts = r.item ? r.alerts.map(a => `<div class="alert ${a.kind}">${esc(a.text)}</div>`).join("") : "";
     const needApprove = r.item && (r.wex || r.hex);
     return `<article class="op" aria-label="فتحة ${i + 1}">
-      <div class="op-head s-${cls}"><span class="no">${i + 1}</span><span class="chip ${cls}">${esc(st)}</span>
+      <div class="op-head s-${cls}"><span class="no">${i + 1}</span>${o.label ? `<b class="op-lbl">${esc(o.label)}</b>` : ""}${r.item && r.qty > 1 ? `<span class="chip info">× ${r.qty} فتحات</span>` : ""}<span class="chip ${cls}">${esc(st)}</span>
         <span class="price num">${r.item ? fmt0(r.total) + " ج" : ""}</span></div>
       <div class="op-body">
         <div class="dims">
           <div class="fld"><label for="w${i}">العرض (سم)</label><input id="w${i}" type="text" inputmode="decimal" autocomplete="off" data-num="1" data-i="${i}" data-f="w" value="${esc(o.w)}"></div>
           <div class="fld"><label for="h${i}">الارتفاع (سم)</label><input id="h${i}" type="text" inputmode="decimal" autocomplete="off" data-num="1" data-i="${i}" data-f="h" value="${esc(o.h)}"></div>
+          <div class="fld fld-q"><label for="q${i}">العدد</label><input id="q${i}" type="text" inputmode="numeric" autocomplete="off" data-num="1" data-i="${i}" data-f="qty" value="${esc(o.qty ?? 1)}" placeholder="1"></div>
+          <div class="fld fld-l"><label for="l${i}">الكود / المكان</label><input id="l${i}" type="text" autocomplete="off" data-i="${i}" data-f="label" value="${esc(o.label || "")}" placeholder="مثلاً W01 – تجاري"></div>
         </div>
         <div><div class="seg-label">نوع الشريحة</div>${seg("base", BASES, o.base, i)}</div>
         ${HAS_FOAM[o.base] ? `<div><div class="seg-label">الفوم</div>${seg("foam", ["سوفت", "هارد"], o.foam || "سوفت", i)}</div>` : ""}
@@ -1202,9 +1216,9 @@ function quoteModel(calc) {
     calc.results.forEach((r, i) => {
       if (!r.item) return;
       const o = order.openings[i];
-      rows.push({ t: "hd", text: `فتحة ${i + 1}: شيش حصيرة ${r.item.name} – ${o.w} × ${o.h} سم – ${o.color || ""}${r.status === "مكتمل – معتمد يدوياً" ? " (مقاس معتمد يدوياً رغم تحذير الداتا شيت)" : ""}` });
+      rows.push({ t: "hd", text: `فتحة ${i + 1}${o.label ? " (" + o.label + ")" : ""}: شيش حصيرة ${r.item.name} – ${o.w} × ${o.h} سم – ${o.color || ""}${r.qty > 1 ? " – العدد " + r.qty : ""}${r.status === "مكتمل – معتمد يدوياً" ? " (مقاس معتمد يدوياً رغم تحذير الداتا شيت)" : ""}` });
       for (const l of quoteLines(r)) rows.push({ t: "ln", key: l.key, text: lineText(l), qty: l.qty, unit: l.unit, up: l.unitPrice, tot: l.total });
-      rows.push({ t: "sub", text: `إجمالي الفتحة ${i + 1}`, tot: r.total });
+      rows.push({ t: "sub", text: r.qty > 1 ? `إجمالي الفتحة ${i + 1} (${r.qty} × ${fmt(r.unitTotal)})` : `إجمالي الفتحة ${i + 1}`, tot: r.total });
     });
     if (calc.soloRows.length) {
       rows.push({ t: "hd", text: "خامات منفردة" });
@@ -1237,10 +1251,10 @@ function openingsTable(calc) {
     const o = order.openings[i];
     const op = (!o.motor || o.motor === "بدون") ? "بدون موتور" : o.motor === "طقم شريط" ? "طقم شريط" : `${o.motor}${r.motorN != null ? " " + r.motorN + " نيوتن" : ""}`;
     const extra = [o.remote ? "ريموت + ريسيفر" : "", o.sw ? "مفتاح شنايدر" : ""].filter(Boolean).join(" + ");
-    return `<tr><td class="n" data-l="م">${i + 1}</td><td data-l="الصنف">شيش حصيرة ${esc(r.item.name)}${r.status === "مكتمل – معتمد يدوياً" ? " *" : ""}</td><td class="n" data-l="المقاس">${esc(o.w)} × ${esc(o.h)} سم</td><td data-l="اللون">${esc(o.color || "")}</td><td data-l="التشغيل">${esc(op)}${extra ? " + " + esc(extra) : ""}</td><td class="n" data-l="سعر الفتحة">${fmt(r.total)}</td></tr>`;
+    return `<tr><td class="n" data-l="م">${i + 1}</td><td data-l="الصنف">${o.label ? `<b>${esc(o.label)}</b> – ` : ""}شيش حصيرة ${esc(r.item.name)}${r.status === "مكتمل – معتمد يدوياً" ? " *" : ""}</td><td class="n" data-l="المقاس">${esc(o.w)} × ${esc(o.h)} سم</td><td data-l="اللون">${esc(o.color || "")}</td><td data-l="التشغيل">${esc(op)}${extra ? " + " + esc(extra) : ""}</td><td class="n" data-l="العدد">${r.qty}</td><td class="n" data-l="سعر الفتحة">${fmt(r.unitTotal)}</td><td class="n" data-l="الإجمالي">${fmt(r.total)}</td></tr>`;
   }).join("");
   const anyManual = calc.results.some(r => r.item && r.status === "مكتمل – معتمد يدوياً");
-  return rows ? `<div class="tbl-wrap"><table class="qt qo"><thead><tr><th>م</th><th>الصنف</th><th>المقاس</th><th>اللون</th><th>التشغيل</th><th>${calc.disc.totalDiscount > 0 ? "سعر الفتحة قبل الخصم" : "سعر الفتحة"}</th></tr></thead><tbody>${rows}</tbody></table></div>${anyManual ? `<div style="font-size:12px">* مقاس معتمد يدوياً رغم تحذير الداتا شيت.</div>` : ""}` : "";
+  return rows ? `<div class="tbl-wrap"><table class="qt qo"><thead><tr><th>م</th><th>الصنف</th><th>المقاس</th><th>اللون</th><th>التشغيل</th><th>العدد</th><th>${calc.disc.totalDiscount > 0 ? "سعر الفتحة قبل الخصم" : "سعر الفتحة"}</th><th>الإجمالي</th></tr></thead><tbody>${rows}<tr class="sub"><td colspan="5">إجمالي عدد الفتحات</td><td class="n">${calc.results.reduce((a, r) => a + (r.item ? r.qty : 0), 0)}</td><td></td><td class="n">${fmt(calc.results.reduce((a, r) => a + (r.item ? r.total : 0), 0))}</td></tr></tbody></table></div>${anyManual ? `<div style="font-size:12px">* مقاس معتمد يدوياً رغم تحذير الداتا شيت.</div>` : ""}` : "";
 }
 function quoteHTML(calc) {
   const rows = quoteModel(calc).map(r => {
@@ -1297,7 +1311,7 @@ function renderServices(calc) {
   const svc = order.services || {};
   const asm = svc.asm || {}, paint = svc.paint || {};
   const def = calc.prices["SRV-ASM"];
-  const n = calc.results.filter(r => r.item).length;
+  const n = calc.results.reduce((a, r) => a + (r.item ? r.qty : 0), 0);
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest("#svcPanel")) { // keep typing undisturbed
     $("#svcAsmTotal").textContent = asm.on ? `${n} فتحة × ${fmt(typeof asm.price === "number" ? asm.price : def)} = ${fmt(n * (typeof asm.price === "number" ? asm.price : (def || 0)))}` : "";
     return;
@@ -1359,7 +1373,7 @@ function pdfDocument(calc) {
 function quoteText(calc) {
   const lines = [`عرض سعر – ${IS_CUSTOMER && company && company.name ? company.name : "SH للصناعات المعدنية"}`, `العميل: ${order.customer || "—"}  |  رقم العرض: ${order.no || "—"}  |  التاريخ: ${order.date || ""}`];
   if (calc.status !== "مكتمل") lines.push(`تنبيه: ${calc.status}`);
-  if (quoteMode() === "sum") calc.results.forEach((r, i) => { if (r.item) { const o = order.openings[i]; lines.push(`فتحة ${i + 1}: شيش حصيرة ${r.item.name} – ${o.w} × ${o.h} سم – ${o.color || ""} = ${fmt(r.total)}`); } });
+  if (quoteMode() === "sum") calc.results.forEach((r, i) => { if (r.item) { const o = order.openings[i]; lines.push(`فتحة ${i + 1}${o.label ? " (" + o.label + ")" : ""}: شيش حصيرة ${r.item.name} – ${o.w} × ${o.h} سم – ${o.color || ""}${r.qty > 1 ? ` – العدد ${r.qty} × ${fmt(r.unitTotal)}` : ""} = ${fmt(r.total)}`); } });
   for (const r of quoteModel(calc)) {
     if (r.t === "hd") lines.push("", r.text);
     else if (r.t === "ln") lines.push(`- ${r.text}: ${fmt(r.qty)} ${r.unit} × ${fmt(r.up)} = ${fmt(r.tot)}`);
@@ -1384,7 +1398,7 @@ async function saveCurrentQuote() {
   const calc = calcAll();
   if (!calc.results.some(r => r.item) && !calc.soloRows.length) { toast("مفيش حاجة تتحفظ – ضيف فتحة الأول"); return; }
   const lines = quoteModel(calc);
-  const r = await safe(() => api.saveQuote({ order, total: calc.net, status: calc.status, openingsCount: calc.results.filter(x => x.item).length, lines }));
+  const r = await safe(() => api.saveQuote({ order, total: calc.net, status: calc.status, openingsCount: calc.results.reduce((a, x) => a + (x.item ? x.qty : 0), 0), lines }));
   if (!r) return;
   order.id = r.id; order.no = r.no; $("#cNo").value = r.no; dirty = false;
   await persistDraft(); await refreshQuotes(); render();
@@ -1599,13 +1613,129 @@ $("#openings").addEventListener("change", e => {
   const i = +el.dataset.i, f = el.dataset.f;
   if (el.dataset.num) return; // handled while typing
   if (el.type === "checkbox") order.openings[i][f] = el.checked;
-  else if (el.tagName === "SELECT") order.openings[i][f] = el.value;
+  else order.openings[i][f] = el.value;
   changed(); render();
 });
 $("#addOp").onclick = () => {
   const last = order.openings[order.openings.length - 1];
   order.openings.push({ ...blankOp(), base: last?.base || "", foam: last?.foam || "سوفت", color: last?.color || "", motor: last?.motor || "بدون" });
   changed(); render(); const n = document.getElementById("w" + (order.openings.length - 1)); if (n) { n.focus(); n.scrollIntoView({ block: "center" }); }
+};
+// ---------------- import openings from an Excel schedule (.xlsx) ----------------
+// reads the first sheet with a tiny zip reader (no library), finds the header row (Width / Height / Count),
+// converts mm → cm, and turns every row with a width and a height into an opening with its count
+async function unzipEntries(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("الملف ده مش Excel (xlsx)");
+  const n = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+  const out = {}, dec = new TextDecoder();
+  for (let k = 0; k < n; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl));
+    out[name] = { method, start: lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true), csize };
+    p += 46 + nl + el + cl;
+  }
+  out.read = async name => {
+    const e = out[name]; if (!e) return null;
+    const data = u8.slice(e.start, e.start + e.csize);
+    if (e.method === 0) return dec.decode(data);
+    const ds = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(ds).text();
+  };
+  return out;
+}
+async function readXlsxRows(buf) {
+  const z = await unzipEntries(buf), xml = t => new DOMParser().parseFromString(t, "application/xml");
+  const ss = [];
+  const sst = await z.read("xl/sharedStrings.xml");
+  if (sst) for (const si of xml(sst).getElementsByTagName("si")) ss.push([...si.getElementsByTagName("t")].map(t => t.textContent).join(""));
+  let sheet = "xl/worksheets/sheet1.xml";
+  const wb = await z.read("xl/workbook.xml"), rels = await z.read("xl/_rels/workbook.xml.rels");
+  if (wb && rels) {
+    const first = xml(wb).getElementsByTagName("sheet")[0];
+    const rid = first && (first.getAttribute("r:id") || first.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"));
+    const rel = [...xml(rels).getElementsByTagName("Relationship")].find(r => r.getAttribute("Id") === rid);
+    if (rel) { const t = rel.getAttribute("Target"); sheet = t.startsWith("/") ? t.slice(1) : "xl/" + t.replace(/^\.\//, ""); }
+  }
+  const sx = await z.read(sheet); if (!sx) throw new Error("مش لاقي الشيت جوه الملف");
+  const rows = [];
+  for (const row of xml(sx).getElementsByTagName("row")) {
+    const r = [];
+    for (const c of row.getElementsByTagName("c")) {
+      const ref = c.getAttribute("r") || ""; let col = 0;
+      for (const ch of ref.replace(/\d+/g, "")) col = col * 26 + ch.charCodeAt(0) - 64;
+      const t = c.getAttribute("t"), v = c.getElementsByTagName("v")[0];
+      let val = t === "inlineStr" ? [...c.getElementsByTagName("t")].map(x => x.textContent).join("") : v ? v.textContent : "";
+      if (t === "s") val = ss[+val] ?? ""; else if (t !== "str" && t !== "inlineStr" && val !== "" && !isNaN(+val)) val = +val;
+      r[col - 1] = val;
+    }
+    rows.push(r);
+  }
+  return rows;
+}
+function scheduleFromRows(rows) {
+  const txt = v => String(v ?? "").trim(), num = v => typeof v === "number" ? v : toNum(txt(v));
+  let hi = -1, cW = -1, cH = -1, cQ = -1, cL = -1, unitHint = "";
+  for (let i = 0; i < rows.length && hi < 0; i++) {
+    const r = rows[i] || [];
+    const find = re => r.findIndex(c => re.test(txt(c)));
+    const w = find(/width|عرض/i), h = find(/height|ارتفاع|إرتفاع/i);
+    if (w < 0 || h < 0) continue;
+    hi = i; cW = w; cH = h;
+    cQ = find(/total\s*count|إجمالي\s*العدد|اجمالي\s*العدد/i);
+    if (cQ < 0) cQ = find(/count|qty|quantity|no\.?\s*of|عدد|كمية/i);
+    cL = find(/^(type|code|mark|ref|item|الكود|كود|النوع|نوع|رقم|البند)/i);
+    if (cL < 0) cL = Math.max(0, Math.min(w, h) - 1);
+    unitHint = txt(r[w]) + " " + txt(r[h]);
+  }
+  if (hi < 0) throw new Error("مش لاقي عمود العرض والارتفاع (Width / Height) في الشيت");
+  const items = []; let group = "";
+  for (let i = hi + 1; i < rows.length; i++) {
+    const r = rows[i] || [], label = txt(r[cL]), w = num(r[cW]), h = num(r[cH]);
+    if (!(w > 0 && h > 0)) {
+      if (label && !/total|إجمالي|اجمالي|vat|ضريبة|grand|diff|%/i.test(label) && !txt(r[cW]) && !txt(r[cH])) group = label;
+      continue;
+    }
+    const q = cQ >= 0 ? num(r[cQ]) : 1;
+    if (cQ >= 0 && !(q > 0)) continue;
+    items.push({ code: label, group, w, h, qty: Math.round(q) || 1 });
+  }
+  if (!items.length) throw new Error("مالقيتش فتحات بمقاسات في الشيت");
+  const maxV = Math.max(...items.map(x => Math.max(x.w, x.h)));
+  const f = /\bmm\b|مم|ملل/i.test(unitHint) ? 0.1 : /\bcm\b|سم/i.test(unitHint) ? 1 : /\(m\)|\bm\b|متر/i.test(unitHint) ? 100 : maxV > 1000 ? 0.1 : maxV <= 10 ? 100 : 1;
+  for (const x of items) { x.w = Math.round(x.w * f * 10) / 10; x.h = Math.round(x.h * f * 10) / 10; }
+  return { items, unit: f === 0.1 ? "مم" : f === 100 ? "متر" : "سم" };
+}
+$("#importXlsx").onclick = () => { $("#xlsxFile").value = ""; $("#xlsxFile").click(); };
+$("#xlsxFile").onchange = async e => {
+  const file = e.target.files && e.target.files[0]; if (!file) return;
+  let sch;
+  try { sch = scheduleFromRows(await readXlsxRows(await file.arrayBuffer())); }
+  catch (err) { toast(err.message || "مقدرتش أقرا الملف"); return; }
+  const total = sch.items.reduce((a, x) => a + x.qty, 0);
+  const sel = (id, opts, v) => `<select id="${id}">${opts.map(o => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const last = order.openings[order.openings.length - 1] || {};
+  const preview = sch.items.slice(0, 40).map(x => `<tr><td>${esc([x.code, x.group].filter(Boolean).join(" – "))}</td><td class="n">${x.w} × ${x.h}</td><td class="n">${x.qty}</td></tr>`).join("");
+  const ok = await modal("استيراد فتحات من Excel",
+    `<p>لقيت <b>${sch.items.length}</b> مقاس = <b>${total}</b> فتحة (المقاسات في الملف بالـ${sch.unit} واتحولت لسم).</p>
+     <div class="tbl-wrap" style="max-height:220px;overflow:auto"><table><thead><tr><th>الكود</th><th>المقاس (سم)</th><th>العدد</th></tr></thead><tbody>${preview}</tbody></table></div>
+     <div class="fld"><label for="impBase">نوع الشريحة لكل الفتحات</label>${sel("impBase", BASES, last.base || "شيلد")}</div>
+     <div class="fld"><label for="impColor">اللون</label>${sel("impColor", COLORS, last.color || "أبيض 9010")}</div>
+     <div class="fld"><label for="impMotor">الموتور / التشغيل</label>${sel("impMotor", MOTOR_TYPES, last.motor && last.motor !== "بدون" ? last.motor : "ميلانو")}</div>
+     <div class="fld"><label for="impFoam">الفوم (للـ5 سم والبروكس والألترا)</label>${sel("impFoam", ["سوفت", "هارد"], last.foam || "سوفت")}</div>
+     <label class="tog"><input type="checkbox" id="impReplace" checked> امسح الفتحات الحالية وحط دول مكانها</label>
+     <div class="note">تقدر بعد كده تغيّر أي فتحة لوحدها.</div>`,
+    [{ label: "استيراد", value: true, primary: true }, { label: "إلغاء", value: false }]);
+  if (!ok) return;
+  const base = $("#impBase").value, color = $("#impColor").value, motor = $("#impMotor").value, foam = $("#impFoam").value;
+  const ops = sch.items.map(x => ({ ...blankOp(), w: x.w, h: x.h, qty: x.qty, label: [x.code, x.group].filter(Boolean).join(" – "), base, color, motor, foam }));
+  const keep = $("#impReplace").checked ? [] : order.openings.filter(o => +o.w > 0 || +o.h > 0);
+  order.openings = [...keep, ...ops];
+  changed(); render(); toast(`اتضافت ${ops.length} مقاس (${total} فتحة)`);
 };
 $("#addSolo").onclick = () => { order.solo.push({ key: "", qty: 1 }); changed(); render(); };
 $("#soloList").addEventListener("change", e => {
