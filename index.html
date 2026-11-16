@@ -212,6 +212,27 @@ tr.disc td { color: var(--ok); font-weight: 600; }
 }
 .disc-row .seg { flex-wrap: nowrap; }
 @media (max-width: 640px) { .disc-row { grid-template-columns: auto minmax(0, 1fr); } .disc-row .disc-res { grid-column: 1 / -1; } }
+/* manual edits per opening */
+details.manual { margin-top: 6px; }
+details.manual summary { cursor: pointer; color: var(--accent, #9a6b00); font-size: 14px; font-weight: 600; }
+.man-top { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.man-top .fld { min-width: 120px; flex: 1; }
+table.man-tbl { width: 100%; }
+table.man-tbl td { vertical-align: top; }
+table.man-tbl select { width: 100%; min-width: 180px; }
+table.man-tbl input { width: 90px; }
+table.man-tbl tr.man td { background: #fff6dc; }
+table.man-tbl tr.gone td { color: var(--muted); }
+.btn.sm { padding: 4px 10px; font-size: 13px; min-height: 0; }
+.man-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+@media (max-width: 640px) {
+  table.man-tbl thead { display: none; }
+  table.man-tbl tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid #e4e0d6; }
+  table.man-tbl td { border: 0; padding: 0; }
+  table.man-tbl td:first-child { grid-column: 1 / -1; font-weight: 600; }
+  table.man-tbl td:nth-child(2) { grid-column: 1 / -1; }
+  table.man-tbl select { min-width: 0; }
+}
 
 </style>
 </head>
@@ -852,6 +873,7 @@ function itemFor(base, foam) {
   return ITEMS.find(i => i.base === base && i.foam === (foam === "هارد" ? "هارد" : "سوفت")) || null;
 }
 
+const loads0 = t => MOTOR_LOADS[MOTOR_CODE[t]] || [];
 // prices: map key -> number | null (null = not registered). Missing key = not in list.
 function computeOpening(op, prices, S) {
   const it = itemFor(op.base, op.foam);
@@ -861,15 +883,17 @@ function computeOpening(op, prices, S) {
   const missing = !op.color || !(W > 0) || !(H > 0);
   const grp = op.color === "رمادي" ? "SPC" : "STD";
   const mw = W - S.wDed, mh = H - S.hDed, area = mw * mh, weight = area * it.kg;
-  const tube = it.tube === "7" ? 7 : ((W > S.widLim || weight > S.wLim) ? 7 : 6);
+  const autoTube = it.tube === "7" ? 7 : ((W > S.widLim || weight > S.wLim) ? 7 : 6);
+  const tube = (+op.tubeSel === 6 || +op.tubeSel === 7) ? +op.tubeSel : autoTube; // manual tube
+  const boxSel = BOX_SIZES.includes(+op.boxSel) ? +op.boxSel : null;              // manual box
   const tubeLen = tube === 7 ? (W <= S.t7w ? W : S.t7bar) : W;
   const tbl = BOX_TABLES[it.table].rows;
   const autoRow = tbl.find(([, mx]) => mx >= H - 1e-9);
   const autoBox = autoRow ? autoRow[0] : null;
   const wex = W > 0 && mw > it.maxW + 1e-9;
-  const hex = H > 0 && autoBox == null;
+  const hex = H > 0 && autoBox == null && boxSel == null;
   const ovr = !!op.override;
-  const box = autoBox != null ? autoBox : (ovr && op.manualBox ? +op.manualBox : null);
+  const box = boxSel != null ? boxSel : autoBox != null ? autoBox : (ovr && op.manualBox ? +op.manualBox : null);
   const chH = H - S.chDed;
   const chLen = chH * S.nCh, brLen = chH * S.nBr;
   const opType = op.motor || "بدون";
@@ -883,14 +907,23 @@ function computeOpening(op, prices, S) {
       else if (S.mMode === "20 ثابت") motorN = S.mMin;
       else { const need = Math.max(S.mMin, req); motorN = loads.find(n => n >= need - 1e-9) ?? null; }
     } else motorN = loads.find(n => n >= req - 1e-9) ?? null;
+    if (loads.includes(+op.motorNSel)) motorN = +op.motorNSel; // manual motor size
   }
-  Object.assign(out, { W, H, mw, mh, area, weight, tube, tubeLen, autoBox, box, wex, hex, ovr, chLen, brLen, req, motorN, grp });
+  Object.assign(out, { W, H, mw, mh, area, weight, tube, autoTube, tubeLen, autoBox, boxSel, box, wex, hex, ovr, chLen, brLen, req, motorN, grp });
+  // manual edits per line (by component): { qty, to: other price key, del: true }; extra lines: op.extras [{ key, qty }]
+  const edits = op.edits && typeof op.edits === "object" ? op.edits : {};
+  out.removed = [];
   const L = (comp, key, qty) => {
+    const e = edits[comp], autoKey = key, autoQty = qty;
+    let manual = false;
+    if (e && e.del) { out.removed.push({ comp, key, qty }); return; }
+    if (e && e.to && e.to !== key) { key = e.to; manual = true; }
+    if (e && e.qty !== undefined && e.qty !== "" && !isNaN(+e.qty) && +e.qty >= 0) { qty = +e.qty; manual = manual || qty !== autoQty; }
     let unitPrice, total;
     if (!(key in prices)) { unitPrice = "غير موجود"; total = "غير موجود"; }
     else if (prices[key] == null) { unitPrice = "غير مسجل"; total = "غير مسجل"; }
     else { unitPrice = prices[key]; total = qty * prices[key]; }
-    out.lines.push({ comp, key, qty, unitPrice, total });
+    out.lines.push({ comp, key, qty, unitPrice, total, autoKey, autoQty, manual });
   };
   const hangers = W > 0 ? Math.ceil(W * S.hgPerM - 1e-9) : 0; // 3 hangers per metre of tube (rounded up)
   L("شرائح", `SL-${it.code}-${grp}`, area);
@@ -912,6 +945,8 @@ function computeOpening(op, prices, S) {
   L("كباية", `CUP-${tube}`, 1);
   if (op.remote) L("ريموت", "RR", 1);
   if (op.sw) L("مفتاح", "SW-SCH", 1);
+  (Array.isArray(op.extras) ? op.extras : []).forEach((x, j) => { if (x && x.key && +x.qty > 0) L("إضافي" + (j ? " " + (j + 1) : ""), x.key, +x.qty); });
+  out.manual = boxSel != null || tube !== autoTube || (isMot && loads0(opType).includes(+op.motorNSel)) || out.removed.length > 0 || out.lines.some(l => l.manual || l.comp.startsWith("إضافي"));
   out.total = out.lines.reduce((s, l) => s + (typeof l.total === "number" ? l.total : 0), 0);
   const notFound = out.lines.some(l => l.total === "غير موجود");
   const unpriced = out.lines.some(l => l.total === "غير مسجل");
@@ -924,6 +959,7 @@ function computeOpening(op, prices, S) {
   if (hex && ovr && !op.manualBox) A("bad", "اكتب مقاس البوكس يدوياً.");
   if (mbad) A("bad", "مفيش موتور من النوع ده يشيل الحمل.");
   if (opType === "ميلانو" && W <= S.mShort && req > 10) A("warn", "الحمل أكبر من 10 نيوتن والعرض حتى 60 سم – راجع الموتور.");
+  if (out.manual) A("info", "الفتحة دي فيها تعديل يدوي.");
   if (notFound) A("bad", "صنف مطلوب مش موجود في قائمة الأسعار.");
   if (unpriced) A("warn", "فيه بند سعره غير مسجل.");
   if (missing) out.status = "خطأ";
@@ -986,7 +1022,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = SH_ENGINE;
 <script>/* SH Pricing – screens. All calculations come from engine.js; all disk access goes through window.shApi (preload.js). */
 "use strict";
 const E = window.SH_ENGINE || SH_ENGINE;
-const { DEFAULT_SETTINGS, SETTING_META, ITEMS, BASES, HAS_FOAM, COLORS, MOTOR_TYPES, BOX_TABLES, BOX_SIZES, PRICE_LIST, computeOpening, orderStatus, DISCOUNT_SECTIONS, computeDiscounts } = E;
+const { DEFAULT_SETTINGS, SETTING_META, ITEMS, BASES, HAS_FOAM, COLORS, MOTOR_TYPES, MOTOR_LOADS, MOTOR_CODE, BOX_TABLES, BOX_SIZES, PRICE_LIST, computeOpening, orderStatus, DISCOUNT_SECTIONS, computeDiscounts } = E;
 const api = window.shApi;
 const IS_WEB = !!window.SH_WEB; // single-file browser edition
 const IS_CUSTOMER = !!window.SH_CUSTOMER; // customer phone edition: prices locked, published by SH
@@ -1070,7 +1106,7 @@ function modal(title, bodyHTML, buttons) {
 // an opening row can stand for several identical openings ("العدد"): the engine prices one, then every line is multiplied
 const opQty = o => { const q = Math.floor(+o.qty); return q >= 1 ? q : 1; };
 function scaleOp(r, q) {
-  r.qty = q; r.unitTotal = r.total;
+  r.qty = q; r.unitTotal = r.total; r.lines1 = r.lines;
   if (q === 1 || !r.item) return r;
   r.lines = r.lines.map(l => ({ ...l, qty: l.qty * q, total: typeof l.total === "number" ? l.total * q : l.total }));
   r.total = r.total * q;
@@ -1103,11 +1139,45 @@ function calcAll() {
 }
 function lineName(l) { const p = PBY[l.key]; return p ? p.name : l.key; }
 const COMP_LABEL = { "فرش بوكس": "فرش البوكس 7×20", "إكسسوار أحمال": "طقم إكسسوار أحمال", "علاقات": "العلاقات", "رينجات": "الرينجات", "تحويلة": "تحويلة 7 سم", "شرائح": "الحصيرة", "بوكس": "البوكس", "جنب": "طقم أجناب البوكس", "طنبور": "الطنبور", "مجاري": "المجرى يمين + شمال", "فرش": "فرش المجاري (4 قطع)", "موتور": "الموتور", "إكسسوار": "التشغيل", "كباية": "كباية الشفت", "ريموت": "ريموت + ريسيفر", "مفتاح": "مفتاح شنايدر" };
+const compLabel = c => COMP_LABEL[c] || (c.startsWith("إضافي") ? "بند إضافي" : c);
+// ---- manual edit panel per opening: box / tube / motor size, and every line (change item, quantity, remove, add) ----
+let PRICE_OPTS = null;
+function priceOptions(sel) {
+  if (!PRICE_OPTS) {
+    const cats = {};
+    for (const p of PRICE_LIST) (cats[p.cat] = cats[p.cat] || []).push(p);
+    PRICE_OPTS = Object.entries(cats).map(([c, ps]) => [c, ps.map(p => [p.key, p.name])]);
+  }
+  return PRICE_OPTS.map(([c, ps]) => `<optgroup label="${esc(c)}">${ps.map(([k, n]) => `<option value="${k}" ${k === sel ? "selected" : ""}>${esc(n)}</option>`).join("")}</optgroup>`).join("");
+}
+function manualPanel(o, r, i) {
+  const ed = o.edits || {};
+  const selBox = `<select data-i="${i}" data-me="boxSel"><option value="">تلقائي${r.autoBox != null ? " (" + r.autoBox + ")" : " (مفيش)"}</option>${BOX_SIZES.map(s => `<option value="${s}" ${+o.boxSel === s ? "selected" : ""}>${s}</option>`).join("")}</select>`;
+  const selTube = `<select data-i="${i}" data-me="tubeSel"><option value="">تلقائي (${r.autoTube})</option>${[6, 7].map(t => `<option value="${t}" ${+o.tubeSel === t ? "selected" : ""}>${t}</option>`).join("")}</select>`;
+  const loads = MOTOR_LOADS[MOTOR_CODE[o.motor]] || [];
+  const selMot = loads.length ? `<div class="fld"><label>قدرة الموتور (نيوتن)</label><select data-i="${i}" data-me="motorNSel"><option value="">تلقائي</option>${loads.map(n => `<option value="${n}" ${+o.motorNSel === n ? "selected" : ""}>${n}</option>`).join("")}</select></div>` : "";
+  const rows = (r.lines1 || r.lines).filter(l => !l.comp.startsWith("إضافي")).map(l => {
+    const e = ed[l.comp] || {};
+    return `<tr class="${l.manual ? "man" : ""}"><td>${esc(compLabel(l.comp))}</td>
+      <td><select data-i="${i}" data-c="${esc(l.comp)}" data-me="to">${priceOptions(l.key)}</select>${l.key !== l.autoKey ? `<div class="note">التلقائي: ${esc(PBY[l.autoKey]?.name || l.autoKey)}</div>` : ""}</td>
+      <td><input type="text" inputmode="decimal" autocomplete="off" data-i="${i}" data-c="${esc(l.comp)}" data-me="qty" value="${esc(e.qty ?? "")}" placeholder="${fmt(l.autoQty)}" aria-label="كمية ${esc(compLabel(l.comp))}"><div class="note">${esc(PBY[l.key]?.unit || "")}</div></td>
+      <td><button type="button" class="btn ghost danger sm" data-i="${i}" data-c="${esc(l.comp)}" data-me="del" title="شيل البند">✕</button></td></tr>`;
+  }).join("");
+  const removed = (r.removed || []).map(l => `<tr class="gone"><td>${esc(compLabel(l.comp))}</td><td colspan="2"><s>${esc(PBY[l.key]?.name || l.key)}</s> – متشال</td><td><button type="button" class="btn sm" data-i="${i}" data-c="${esc(l.comp)}" data-me="restore">رجّع</button></td></tr>`).join("");
+  const extras = (o.extras || []).map((x, j) => `<tr><td>بند إضافي</td><td><select data-i="${i}" data-j="${j}" data-me="xkey"><option value="">اختار الصنف…</option>${priceOptions(x.key)}</select></td>
+      <td><input type="text" inputmode="decimal" autocomplete="off" data-i="${i}" data-j="${j}" data-me="xqty" value="${esc(x.qty ?? "")}" aria-label="كمية البند الإضافي"><div class="note">${esc(PBY[x.key]?.unit || "")}</div></td>
+      <td><button type="button" class="btn ghost danger sm" data-i="${i}" data-j="${j}" data-me="xdel">✕</button></td></tr>`).join("");
+  return `<div class="man-top"><div class="fld"><label>البوكس</label>${selBox}</div><div class="fld"><label>الطنبور</label>${selTube}</div>${selMot}</div>
+    <div class="tbl-wrap"><table class="man-tbl"><thead><tr><th>البند</th><th>الصنف</th><th>الكمية للفتحة الواحدة</th><th></th></tr></thead><tbody>${rows}${removed}${extras}</tbody></table></div>
+    <div class="note">الكمية الفاضية = الكمية المحسوبة تلقائي (الرقم الرمادي). اكتب رقم عشان تغيّرها.</div>
+    <div class="man-btns"><button type="button" class="btn sm" data-i="${i}" data-me="xadd">+ بند إضافي</button>
+      ${r.manual ? `<button type="button" class="btn ghost danger sm" data-i="${i}" data-me="reset">رجّع كل الفتحة للتلقائي</button>` : ""}</div>`;
+}
 function quoteLines(r) {
   const out = []; let mot = null, acc = null;
   for (const l of r.lines) {
     if (l.comp === "موتور") mot = l; else if (l.comp === "إكسسوار") acc = l;
-    else out.push({ key: l.key, label: COMP_LABEL[l.comp], name: lineName(l), qty: l.qty, unit: PBY[l.key]?.unit || "", unitPrice: l.unitPrice, total: l.total, comp: l.comp });
+    else out.push({ key: l.key, label: compLabel(l.comp), name: lineName(l), qty: l.qty, unit: PBY[l.key]?.unit || "", unitPrice: l.unitPrice, total: l.total, comp: l.comp });
   }
   if (mot || acc) {
     const parts = [mot, acc].filter(Boolean);
@@ -1133,6 +1203,8 @@ function renderOrder(calc) {
   const wrap = $("#openings");
   const openState = {};
   wrap.querySelectorAll("details.lines").forEach(d => openState[d.dataset.i] = d.open);
+  const manState = {};
+  wrap.querySelectorAll("details.manual").forEach(d => manState[d.dataset.i] = d.open);
   wrap.innerHTML = order.openings.map((o, i) => {
     const r = calc.results[i];
     const st = r.item ? r.status : "فاضية";
@@ -1168,7 +1240,8 @@ function renderOrder(calc) {
           <label class="tog"><input type="checkbox" data-i="${i}" data-f="override" ${o.override ? "checked" : ""}> اعتماد فني: السماح بتنفيذ الفتحة رغم التحذير</label>
           ${r.hex && o.override ? `<div class="fld"><label for="mb${i}">مقاس البوكس يدوياً</label><select id="mb${i}" data-i="${i}" data-f="manualBox"><option value="">اختار…</option>${BOX_SIZES.map(s => `<option ${+o.manualBox === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>` : ""}
         </div>` : ""}
-        ${r.item ? `<details class="lines" data-i="${i}" ${openState[i] ? "open" : ""}><summary>تفاصيل الخامات والأسعار</summary>${linesTable(r)}</details>` : ""}
+        ${r.item ? `<details class="lines" data-i="${i}" ${openState[i] ? "open" : ""}><summary>تفاصيل الخامات والأسعار</summary>${linesTable(r)}</details>
+          <details class="manual" data-i="${i}" ${manState[i] ? "open" : ""}><summary>تعديل يدوي (بوكس – طنبور – موتور – أي بند)${r.manual ? " ✎" : ""}</summary>${manState[i] ? manualPanel(o, r, i) : ""}</details>` : ""}
       </div>
       <div class="op-foot"><button class="btn" type="button" data-act="dup" data-i="${i}">تكرار الفتحة</button>
         <button class="btn ghost danger" type="button" data-act="del" data-i="${i}" ${order.openings.length < 2 ? "disabled" : ""}>حذف</button></div>
@@ -1523,6 +1596,7 @@ function renderSettings() {
     "الحصيرة = (عرض الفتحة − 11 سم) × (ارتفاع الفتحة − 10 سم)، والسعر على مساحة الحصيرة. بدون أي خصم.",
     "البوكس: أصغر بوكس أقصى ارتفاعه ≥ ارتفاع الفتحة من جدول الشريحة، وطوله = عرض الفتحة. البوكس متسعّر بفرش.",
     "طقم أجناب البوكس (يمين + شمال) واحد لكل فتحة بمقاس البوكس. مع بوكس 30 بيبقى طقم أحمال تلقائي.",
+    "تعديل يدوي: من \"تعديل يدوي\" في كل فتحة تقدر تغيّر البوكس أو الطنبور أو قدرة الموتور، وتغيّر صنف أي بند أو كميته أو تشيله، وتضيف بنود زيادة. الكميات للفتحة الواحدة وبتتضرب في العدد. زرار \"رجّع كل الفتحة للتلقائي\" بيلغي التعديلات.",
     "الطنبور 6 سم، و7 سم لو عرض الفتحة أكبر من 4 م أو وزن الحصيرة أكبر من 38 كجم. الشيلد والإيرو 7 ثابت. طوله = عرض الفتحة (وطنبور 7 فوق 2.90 م عود كامل 5.80).",
     "المجرى يمين + شمال = (ارتفاع الفتحة − 10 سم) × 2: شيلد وألترا وإيرو عريض، بروكس و5 سم عادي (وسط). فرش المجاري 4 قطع × ارتفاع المجرى.",
     "كباية شفت واحدة لكل فتحة بمقاس الطنبور.",
@@ -1600,6 +1674,42 @@ $("#openings").addEventListener("click", e => {
   if (b.dataset.act === "dup") { order.openings.splice(i + 1, 0, JSON.parse(JSON.stringify(order.openings[i]))); changed(); render(); toast(`اتكررت الفتحة ${i + 1}`); }
   if (b.dataset.act === "del" && order.openings.length > 1) { order.openings.splice(i, 1); changed(); render(); toast("اتحذفت الفتحة"); }
 });
+// manual edits
+function opEdit(i, c) { const o = order.openings[i]; o.edits = o.edits || {}; return (o.edits[c] = o.edits[c] || {}); }
+function cleanEdits(o) { if (o.edits) for (const k of Object.keys(o.edits)) { const e = o.edits[k]; if (!e.del && !e.to && (e.qty === undefined || e.qty === "")) delete o.edits[k]; } }
+$("#openings").addEventListener("toggle", e => {
+  const d = e.target; if (!d.matches || !d.matches("details.manual")) return;
+  if (d.open && !d.querySelector(".man-top")) render();
+}, true);
+$("#openings").addEventListener("click", e => {
+  const b = e.target.closest("button[data-me]"); if (!b) return;
+  e.stopPropagation();
+  const i = +b.dataset.i, o = order.openings[i], c = b.dataset.c, j = +b.dataset.j;
+  if (b.dataset.me === "del") opEdit(i, c).del = true;
+  if (b.dataset.me === "restore") { delete opEdit(i, c).del; cleanEdits(o); }
+  if (b.dataset.me === "xadd") (o.extras = o.extras || []).push({ key: "", qty: 1 });
+  if (b.dataset.me === "xdel") o.extras.splice(j, 1);
+  if (b.dataset.me === "reset") { delete o.edits; delete o.extras; delete o.boxSel; delete o.tubeSel; delete o.motorNSel; toast("رجعت الفتحة للحساب التلقائي"); }
+  changed(); render();
+}, true);
+$("#openings").addEventListener("change", e => {
+  const el = e.target; if (!el.dataset.me) return;
+  e.stopPropagation();
+  const i = +el.dataset.i, o = order.openings[i], m = el.dataset.me;
+  if (m === "boxSel" || m === "tubeSel" || m === "motorNSel") { if (el.value) o[m] = +el.value; else delete o[m]; }
+  if (m === "to") { const ed = opEdit(i, el.dataset.c); const l = calcAll().results[i].lines1.find(x => x.comp === el.dataset.c); if (l && el.value === l.autoKey) delete ed.to; else ed.to = el.value; cleanEdits(o); }
+  if (m === "xkey") o.extras[+el.dataset.j].key = el.value;
+  if (m === "qty" || m === "xqty") return; // handled while typing
+  changed(); render();
+}, true);
+$("#openings").addEventListener("input", e => {
+  const el = e.target; if (el.dataset.me !== "qty" && el.dataset.me !== "xqty") return;
+  e.stopPropagation();
+  const i = +el.dataset.i, o = order.openings[i], v = el.value.trim();
+  if (el.dataset.me === "qty") { const ed = opEdit(i, el.dataset.c); if (v === "") delete ed.qty; else ed.qty = toNum(v); cleanEdits(o); }
+  else o.extras[+el.dataset.j].qty = v === "" ? "" : toNum(v);
+  changed(); clearTimeout(typingTimer); typingTimer = setTimeout(render, 450);
+}, true);
 let typingTimer = null;
 $("#openings").addEventListener("input", e => {
   const el = e.target; if (!el.dataset.f || !el.dataset.num) return;
