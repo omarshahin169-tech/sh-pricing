@@ -884,7 +884,7 @@ function buildPrices() {
   add("X-MCR30", "ميلانو Crank with Handle 30N", "قطعة", 4645, MILS, "solo", "الموتورات");
   add("X-MCR50", "ميلانو Crank with Handle 50N", "قطعة", 5305, MILS, "solo", "الموتورات");
   add("CUP-6", "كباية شفت 6 سم", "قطعة", 55, PL3, "open", "الإكسسوارات");
-  add("CUP-7", "كباية شفت 7 سم", "قطعة", null, "الليستة فيها كباية 6 سم بس", "open", "الإكسسوارات");
+  add("CUP-7", "كباية شفت 7 سم", "قطعة", 66, "سعر من SH (نوفمبر 2026) = كباية 6 سم + 20%", "open", "الإكسسوارات");
   add("X-H17", "علاقة 17 سم", "قطعة", 26, "سعر من SH (نوفمبر 2026) – الليستة 30", "open", "الإكسسوارات");
   add("X-RG6", "رينج 6 سم", "قطعة", 9, PL3, "open", "الإكسسوارات");
   add("X-RG7", "رينج 7 سم", "قطعة", 11, PL3, "open", "الإكسسوارات");
@@ -2276,6 +2276,27 @@ if (LOCKED) {
   for (const id of ["savePrices", "importPrices", "exportPrices", "resetPrices"]) $("#" + id).hidden = true;
   const h = document.getElementById("helpCustomer"); if (h) h.hidden = false;
 }
+// an order can arrive inside a link: ...#o=<base64url of the order JSON> (sent by SH)
+async function loadOrderFromLink() {
+  let m = null; try { m = (location.hash || "").match(/^#o=([A-Za-z0-9_-]+)/); } catch (e) { }
+  if (!m) return;
+  try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { }
+  let o;
+  try {
+    const b = atob(m[1].replace(/-/g, "+").replace(/_/g, "/"));
+    o = JSON.parse(new TextDecoder().decode(Uint8Array.from(b, c => c.charCodeAt(0))));
+    if (!o || !Array.isArray(o.openings) || !o.openings.length) throw 0;
+  } catch (e) { toast("اللينك ده مش فيه أوردر سليم"); return; }
+  const n = o.openings.reduce((a, x) => a + (Math.max(1, Math.floor(+(Array.isArray(x) ? x[2] : x.qty)) || 1)), 0);
+  const ok = await modal("أوردر جاي من لينك", `<p>العميل: <b>${esc(o.customer || "—")}</b> · ${o.openings.length} مقاس = <b>${n}</b> فتحة.</p>${dirty ? `<p class="note" style="color:var(--bad)">الأوردر اللي مفتوح دلوقتي فيه تعديلات ماتحفظتش – احفظه الأول لو محتاجه.</p>` : ""}<p>تفتحه مكان الأوردر الحالي؟</p>`,
+    [{ label: "افتح الأوردر", value: true, primary: true }, { label: "لأ", value: false }]);
+  if (!ok) return;
+  const base = newOrderState(false);
+  order = { ...base, customer: String(o.customer || ""), phone: String(o.phone || ""), quoteMode: o.quoteMode === "detail" ? "detail" : "sum",
+    openings: o.openings.map(x => ({ ...blankOp(), ...(o.def || {}), ...(Array.isArray(x) ? { w: x[0], h: x[1], qty: x[2] || 1, ...(x[3] || {}) } : x) })) };
+  dirty = true; await persistDraft(); viewName = "order";
+  toast("اتفتح الأوردر – راجعه واحفظه");
+}
 (async function boot() {
   if (!api) { document.body.innerHTML = "<p style='padding:20px'>البرنامج لازم يتفتح من نسخة الديسكتوب.</p>"; return; }
   const st = await safe(() => api.loadState()); if (st) applyState(st);
@@ -2283,6 +2304,7 @@ if (LOCKED) {
   if (d && d.order && Array.isArray(d.order.openings)) { order = d.order; order.phone = order.phone || ""; dirty = !!d.dirty; }
   await refreshQuotes();
   if (IS_CUSTOMER && api.getCompany) { company = await safe(() => api.getCompany()); if (!company || !company.name) viewName = "company"; }
+  await loadOrderFromLink();
   bindCustomer(); showView();
   if (window.SH_STORAGE_WARN) {
     const b = document.createElement("div");
