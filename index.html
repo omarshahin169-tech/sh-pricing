@@ -302,6 +302,7 @@ table.man-tbl tr.gone td { color: var(--muted); }
       <button class="btn primary" id="pdfQuote" type="button">حفظ عرض السعر PDF</button>
       <button class="btn" id="copyQuote" type="button">نسخ عرض السعر كنص (واتساب)</button>
       <button class="btn" id="saveQuote2" type="button">حفظ العرض</button>
+      <button class="btn primary" type="button" data-send="1" hidden>إرسال الأوردر للمصنع</button>
     </div>
     <div class="seg" role="group" aria-label="شكل عرض السعر">
       <button type="button" id="qmSum" aria-pressed="true">مجمّع للأوردر كله</button>
@@ -364,6 +365,7 @@ table.man-tbl tr.gone td { color: var(--muted); }
       <p class="note" id="cutNote"></p>
       <div class="toolbar">
         <button class="btn primary" type="button" data-cut="all">PDF الـ3 ورق مع بعض</button>
+        <button class="btn primary" type="button" data-send="1" hidden>إرسال الأوردر للمصنع</button>
       </div>
     </div>
     <div id="cutSheets"></div>
@@ -1683,6 +1685,61 @@ document.addEventListener("click", async e => {
   const k = b.dataset.cutcopy, t = CUT_SHEETS.find(x => x[0] === k)[1];
   try { await navigator.clipboard.writeText(cutText(k, t, cutData(calcAll())[k])); toast("اتنسخت الورقة – الصقها في الواتساب"); } catch (err) { toast("ماقدرتش أنسخ"); }
 });
+
+// ---------------- send the order to the factory (Google Sheets via Apps Script) ----------------
+let ordersCfg; // { url, token } from orders-config.json published next to the app
+async function getOrdersCfg() {
+  if (ordersCfg !== undefined) return ordersCfg;
+  ordersCfg = null;
+  if (location.protocol.startsWith("http")) for (const f of ["orders-config.json", "../orders-config.json"]) {
+    try { const r = await fetch(f + "?t=" + Date.now(), { cache: "no-store" }); if (r.ok) { const c = await r.json(); if (c && c.url) { ordersCfg = c; break; } } } catch (e) { }
+  }
+  return ordersCfg;
+}
+const lsGet = k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { } };
+async function sendToFactory() {
+  const calc = calcAll();
+  if (!calc.results.some(r => r.item)) { toast("مفيش فتحات في الأوردر"); return; }
+  const cfg = await getOrdersCfg();
+  if (!cfg) { await modal("الإرسال للمصنع", "<p>رابط استقبال الأوردرات لسه متظبطش، أو مفيش نت. كلّم المكتب، وابعت الـ PDF على الواتساب لحد ما يتظبط.</p>", [{ label: "تمام", value: true, primary: true }]); return; }
+  if (calc.status !== "مكتمل" && !calc.status.startsWith("مكتمل")) {
+    const go = await modal("الأوردر مش مكتمل", `<p>حالة الأوردر: <b>${esc(calc.status)}</b>. متأكد إنك عايز تبعته للمصنع كده؟</p>`, [{ label: "ابعته", value: true, primary: true }, { label: "رجوع", value: false }]);
+    if (!go) return;
+  }
+  let name = lsGet("sh.salesName");
+  const ok = await modal("إرسال الأوردر للمصنع", `<p>العميل: <b>${esc(order.customer || "—")}</b> · عدد الفتحات: <b>${calc.results.reduce((a, r) => a + (r.item ? r.qty : 0), 0)}</b> · الإجمالي: <b>${fmt0(calc.net)}</b> جنيه</p>
+    <div class="fld"><label for="sendName">اسمك (السيلز)</label><input id="sendName" type="text" autocomplete="name" value="${esc(name)}"></div>
+    <p class="note">الأوردر هيتحفظ وهيوصل للمصنع بورق التقطيع. لو بعته تاني بعد تعديل، النسخة القديمة بتتمسح وتتحط الجديدة.</p>`,
+    [{ label: "ابعت للمصنع", value: true, primary: true }, { label: "إلغاء", value: false }]);
+  if (!ok) return;
+  name = $("#sendName").value.trim();
+  if (!name) { toast("اكتب اسمك الأول"); return; }
+  lsSet("sh.salesName", name);
+  if (!order.id || dirty) { await saveCurrentQuote(); if (!order.id) return; }
+  const c2 = calcAll(), cut = cutData(c2);
+  const unitOf = k => (PBY[k] ? PBY[k].unit : "");
+  const payload = {
+    token: cfg.token || "", id: order.id, no: order.no, sales: name, customer: order.customer || "", phone: order.phone || "", date: order.date || "",
+    total: Math.round(c2.net * 100) / 100, status: c2.status, openingsCount: c2.results.reduce((a, r) => a + (r.item ? r.qty : 0), 0),
+    openings: c2.results.map((r, i) => {
+      if (!r.item) return null; const o = order.openings[i];
+      const op = (!o.motor || o.motor === "بدون") ? "بدون موتور" : o.motor + (r.motorN != null ? " " + r.motorN + " نيوتن" : "");
+      return { n: i + 1, label: o.label || "", slat: r.item.name, color: o.color || "", w: +o.w, h: +o.h, qty: r.qty, motor: op, box: r.box, tube: r.tube, manual: !!r.manual };
+    }).filter(Boolean),
+    cut: { slats: cut.slats, box: cut.box, parts: cut.parts.map(x => ({ ...x, unit: x.len != null ? "قطعة" : unitOf(x.key) })) }
+  };
+  toast("بيتبعت للمصنع…");
+  try {
+    let res = null;
+    try { const r = await fetch(cfg.url, { method: "POST", body: JSON.stringify(payload) }); res = await r.json(); }
+    catch (e) { await fetch(cfg.url, { method: "POST", mode: "no-cors", body: JSON.stringify(payload) }); res = { ok: true, blind: true }; }
+    if (!res || !res.ok) throw new Error(res && res.error ? res.error : "الإرسال ما نجحش");
+    order.sentAt = new Date().toISOString(); await persistDraft();
+    toast(res.again ? `اتبعت التعديل للمصنع – أوردر ${order.no}` : `اتبعت الأوردر ${order.no} للمصنع`);
+  } catch (e) { toast("ماقدرتش أبعت: " + (e.message || "مفيش نت") + " – جرّب تاني"); }
+}
+if (!IS_CUSTOMER) document.querySelectorAll("[data-send]").forEach(b => { b.hidden = false; b.onclick = sendToFactory; });
 
 // ---------------- admin lock ----------------
 function lockBox() {
