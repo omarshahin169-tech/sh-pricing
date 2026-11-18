@@ -233,6 +233,16 @@ table.man-tbl tr.gone td { color: var(--muted); }
   table.man-tbl td:nth-child(2) { grid-column: 1 / -1; }
   table.man-tbl select { min-width: 0; }
 }
+/* factory cutting sheets */
+#v-cut, #cutSheets, .cut-sheet, .sheet { min-width: 0; max-width: 100%; }
+.cut-sheet .qh { display: none; }
+.sheet h1 { font-size: 18px; margin: 10px 0 4px; }
+.sheet .meta { display: flex; gap: 4px 18px; flex-wrap: wrap; margin: 4px 0; font-size: 14px; }
+.sheet .ded { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+.sheet .big { font-weight: 700; font-size: 15px; }
+.sheet .sign { display: none; }
+.sheet tr.hd td { background: var(--info-bg); font-weight: 700; }
+.sheet tr.sub td { font-weight: 700; background: #f4f3ef; }
 
 </style>
 </head>
@@ -250,6 +260,7 @@ table.man-tbl tr.gone td { color: var(--muted); }
     <a href="#quote" data-view="quote">عرض السعر</a>
     <a href="#saved" data-view="saved">العروض المحفوظة</a>
     <a href="#takeoff" data-view="takeoff">حصر الخامات</a>
+    <a href="#cut" data-view="cut">التقطيع للمصنع</a>
     <a href="#prices" data-view="prices">الأسعار</a>
     <a href="#rules" data-view="rules">الإعدادات والبيانات</a>
     <a href="#company" data-view="company" hidden>بيانات شركتي</a>
@@ -344,6 +355,18 @@ table.man-tbl tr.gone td { color: var(--muted); }
       <p class="note">كميات كل الخامات المطلوبة في الأوردر، شامل فرش البوكس (حصر بس، سعره داخل البوكس بفرش).</p>
       <div class="tbl-wrap"><table id="takeoffTbl"></table></div>
     </div>
+  </section>
+
+  <!-- FACTORY CUTTING -->
+  <section class="view" id="v-cut">
+    <div class="panel">
+      <h2>التقطيع وأمر التشغيل للمصنع</h2>
+      <p class="note" id="cutNote"></p>
+      <div class="toolbar">
+        <button class="btn primary" type="button" data-cut="all">PDF الـ3 ورق مع بعض</button>
+      </div>
+    </div>
+    <div id="cutSheets"></div>
   </section>
 
   <!-- PRICES -->
@@ -490,7 +513,8 @@ table.man-tbl tr.gone td { color: var(--muted); }
  * Used only by build/build-single-file.js; the desktop app does not load this file. */
 (function () {
   "use strict";
-  const K = { company: "sh.company", prices: "sh.prices", settings: "sh.settings", admin: "sh.admin", draft: "sh.draft", quotes: "sh.quotes", lastBackup: "sh.lastBackup" };
+  const NS = window.SH_SALES ? "shs." : "sh."; // sales edition keeps its own data
+  const K = { company: NS + "company", prices: NS + "prices", settings: NS + "settings", admin: NS + "admin", draft: NS + "draft", quotes: NS + "quotes", lastBackup: NS + "lastBackup" };
   const VERSION = "1.0.0";
   let unlocked = false;
   const nowISO = () => new Date().toISOString();
@@ -530,9 +554,9 @@ table.man-tbl tr.gone td { color: var(--muted); }
       return "f1:" + h.toString(16);
     }
   }
-  const CUSTOMER = !!window.SH_CUSTOMER;
+  const CUSTOMER = !!window.SH_CUSTOMER || !!window.SH_SALES; // both get SH's published prices, locked
   function requireAdmin() {
-    if (CUSTOMER) throw new Error("الخاصية دي مش متاحة في نسخة العملاء.");
+    if (CUSTOMER) throw new Error(window.SH_SALES ? "الخاصية دي للمكتب بس – الأسعار بتتحدث من SH." : "الخاصية دي مش متاحة في نسخة العملاء.");
     if (!unlocked) throw new Error("لازم تدخل كلمة سر المدير الأول.");
   }
   // Customer edition: prices come from the file "prices.shprices" published next to the app by SH.
@@ -542,7 +566,7 @@ table.man-tbl tr.gone td { color: var(--muted); }
     try {
       const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
       let r = null;
-      for (const f of ["prices.shprices", "prices.json"]) {
+      for (const f of ["prices.shprices", "prices.json", ...(window.SH_SALES ? ["../prices.shprices", "../prices.json"] : [])]) {
         try { r = await fetch(f + "?t=" + Date.now(), { cache: "no-store", signal: ctrl.signal }); if (r.ok) break; } catch (e) { r = null; }
       }
       clearTimeout(t);
@@ -697,6 +721,7 @@ table.man-tbl tr.gone td { color: var(--muted); }
         // row bottoms (safe places to cut a page)
         const top0 = doc.body.getBoundingClientRect().top;
         const cuts = [...doc.querySelectorAll("tr, .qh, .warn")].map(el => Math.round((el.getBoundingClientRect().bottom - top0) * scale)).sort((a, b) => a - b);
+        const forced = [...doc.querySelectorAll(".pb")].map(el => Math.round((el.getBoundingClientRect().top - top0) * scale)).filter(v => v > 0).sort((a, b) => a - b);
         const W = canvas.width, H = canvas.height;
         const pageW = 595.28, pageH = 841.89, margin = 28.35;
         const usableW = pageW - 2 * margin, usableH = pageH - 2 * margin;
@@ -705,7 +730,9 @@ table.man-tbl tr.gone td { color: var(--muted); }
         let y = 0;
         while (y < H - 2) {
           let end = Math.min(H, y + slicePx);
-          if (end < H) { const ok = cuts.filter(c => c > y + slicePx * 0.4 && c <= end); if (ok.length) end = ok[ok.length - 1]; }
+          const fb = forced.find(f => f > y + 4 && f < end);
+          if (fb) end = fb;
+          else if (end < H) { const ok = cuts.filter(c => c > y + slicePx * 0.4 && c <= end); if (ok.length) end = ok[ok.length - 1]; }
           const c = document.createElement("canvas"); c.width = W; c.height = end - y;
           const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(canvas, 0, -y);
           const b64 = c.toDataURL("image/jpeg", 0.92).split(",")[1];
@@ -753,7 +780,9 @@ const PL1 = "ليستة – الشرائح", PL2 = "ليستة – العلب و
 
 const DEFAULT_SETTINGS = {
   wDed: 0.11, hDed: 0.10, chDed: 0.10, nCh: 2, nBr: 4, wLim: 38, widLim: 4, nFac: 1.3,
-  mShort: 0.60, mMin: 20, mMode: "بالوزن", t7w: 2.9, t7bar: 5.8, hgPerM: 3
+  mShort: 0.60, mMin: 20, mMode: "بالوزن", t7w: 2.9, t7bar: 5.8, hgPerM: 3,
+  // factory cutting only (cm) – never used in prices
+  cutSlW: 11, cutSlH: 10, cutBox: 1, cutTube: 5, cutCh: 10
 };
 const SETTING_META = [
   ["wDed", "خصم عرض الحصيرة من عرض الفتحة", "م"], ["hDed", "خصم ارتفاع الحصيرة من ارتفاع الفتحة", "م"],
@@ -762,7 +791,10 @@ const SETTING_META = [
   ["widLim", "طنبور 7 لو عرض الفتحة أكبر من", "م"], ["nFac", "معامل الوزن: الحمل = الوزن ÷", ""],
   ["mShort", "ميلانو 10 نيوتن قصير لعرض فتحة حتى", "م"], ["mMin", "أقل حمل لميلانو فوق العرض ده", "نيوتن"],
   ["mMode", "طريقة اختيار حمل ميلانو فوق 60 سم", ""], ["t7w", "طنبور 7: عود كامل لو عرض الفتحة أكبر من", "م"],
-  ["t7bar", "طنبور 7: طول العود الكامل", "م"], ["hgPerM", "عدد العلاقات لكل متر من طول الطنبور", "علاقة"]
+  ["t7bar", "طنبور 7: طول العود الكامل", "م"], ["hgPerM", "عدد العلاقات لكل متر من طول الطنبور", "علاقة"],
+  ["cutSlW", "التقطيع: خصم عرض الحصيرة من عرض الفتحة", "سم"], ["cutSlH", "التقطيع: خصم ارتفاع الحصيرة من ارتفاع الفتحة", "سم"],
+  ["cutBox", "التقطيع: خصم طول البوكس من عرض الفتحة", "سم"], ["cutTube", "التقطيع: خصم طول الطنبور من عرض الفتحة", "سم"],
+  ["cutCh", "التقطيع: خصم طول المجرى من ارتفاع الفتحة", "سم"]
 ];
 
 // base type, foam -> item
@@ -970,6 +1002,60 @@ function computeOpening(op, prices, S) {
   return out;
 }
 
+// ---------------- factory cutting sheets (production only, prices untouched) ----------------
+// results: computeOpening results (one opening each, before multiplying by count); ops: the openings (w, h in cm, qty, label, color)
+// returns three sheets: slats, box, parts (tube, channels, brushes, motor and every accessory)
+function cuttingSheets(results, ops, S, nameOf) {
+  const D = k => { const v = +S[k]; return isFinite(v) ? v : DEFAULT_SETTINGS[k]; };
+  const cm = v => Math.round(v * 10) / 10;
+  const slats = new Map(), boxes = new Map(), parts = new Map();
+  const refOf = (o, i) => (o.label ? String(o.label).split(/\s+[–-]\s+/)[0] : "") || "ف" + (i + 1);
+  let curQ = 1;
+  const add = (m, k, row, n, ref) => { // n = pieces; refs count openings
+    if (!m.has(k)) m.set(k, { ...row, count: 0, refs: new Map() });
+    const x = m.get(k); x.count += n; x.refs.set(ref, (x.refs.get(ref) || 0) + curQ);
+  };
+  results.forEach((r, i) => {
+    if (!r || !r.item) return;
+    const o = ops[i] || {}, q = Math.max(1, Math.floor(+o.qty) || 1), w = +o.w || 0, h = +o.h || 0, ref = refOf(o, i);
+    const color = o.color || ""; curQ = q;
+    const byComp = {}; for (const l of r.lines) byComp[l.comp] = l;
+    const sl = byComp["شرائح"];
+    if (sl) {
+      const code = (sl.key.match(/^SL-([A-Z0-9]+)-/) || [])[1];
+      const it = ITEMS.find(x => x.code === code) || r.item;
+      const cw = cm(w - D("cutSlW")), ch = cm(h - D("cutSlH"));
+      const n = Math.ceil(ch / 100 * it.slm - 1e-9);
+      add(slats, [it.code, color, cw, ch].join("|"), { name: it.name, color, w: cw, h: ch, slats: n }, q, ref);
+    }
+    const bx = byComp["بوكس"];
+    if (bx) {
+      const size = (bx.key.match(/^BX-([\d.]+)-/) || [])[1] || r.box;
+      const len = cm(w - D("cutBox"));
+      add(boxes, ["BX", size, color, len].join("|"), { kind: "box", name: `بوكس ${size}`, color, len, per: 1 }, q, ref);
+      if (byComp["فرش بوكس"]) add(boxes, ["BR", len].join("|"), { kind: "brush", name: nameOf(byComp["فرش بوكس"].key), color: "", len, per: 2 }, 2 * q, ref);
+    }
+    if (byComp["جنب"]) add(boxes, ["SD", byComp["جنب"].key].join("|"), { kind: "set", key: byComp["جنب"].key, name: nameOf(byComp["جنب"].key), color: "", len: null }, q, ref);
+    if (byComp["إكسسوار أحمال"]) add(boxes, ["TA", byComp["إكسسوار أحمال"].key].join("|"), { kind: "set", key: byComp["إكسسوار أحمال"].key, name: nameOf(byComp["إكسسوار أحمال"].key), color: "", len: null }, q, ref);
+    for (const l of r.lines) {
+      if (["شرائح", "بوكس", "فرش بوكس", "جنب", "إكسسوار أحمال"].includes(l.comp)) continue;
+      if (l.comp === "طنبور") { const len = cm(w - D("cutTube")); add(parts, ["1", l.key, len].join("|"), { grp: "الطنابير", name: nameOf(l.key), len, unit: "قطعة" }, q, ref); continue; }
+      if (l.comp === "مجاري") { const len = cm(h - D("cutCh")); add(parts, ["2", l.key, color, len].join("|"), { grp: "المجاري", name: nameOf(l.key), color, len, unit: "قطعة" }, (+S.nCh || 2) * q, ref); continue; }
+      if (l.comp === "فرش") { const len = cm(h - D("cutCh")); add(parts, ["3", l.key, len].join("|"), { grp: "فرش المجاري", name: nameOf(l.key), len, unit: "قطعة" }, (+S.nBr || 4) * q, ref); continue; }
+      const grp = l.comp === "موتور" ? "المواتير والتشغيل" : l.comp === "إكسسوار" || l.comp === "تحويلة" || l.comp === "ريموت" || l.comp === "مفتاح" ? "المواتير والتشغيل" : "الإكسسوارات";
+      add(parts, [grp === "الإكسسوارات" ? "5" : "4", l.key].join("|"), { grp, key: l.key, name: nameOf(l.key), len: null }, l.qty * q, ref);
+    }
+  });
+  const fin = m => [...m.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
+    .map(([, x]) => ({ ...x, refs: [...x.refs.entries()].map(([k, n]) => n > 1 ? `${k}×${+n.toFixed(2)}` : k).join("، ") }));
+  const S1 = fin(slats).sort((a, b) => a.name.localeCompare(b.name, "ar") || b.w - a.w || b.h - a.h);
+  const S2 = fin(boxes).sort((a, b) => (a.kind === "box" ? 0 : a.kind === "brush" ? 1 : 2) - (b.kind === "box" ? 0 : b.kind === "brush" ? 1 : 2) || String(a.name).localeCompare(String(b.name), "ar") || (b.len || 0) - (a.len || 0));
+  const S3 = fin(parts);
+  const ORD = ["الطنابير", "المجاري", "فرش المجاري", "المواتير والتشغيل", "الإكسسوارات"];
+  S3.sort((a, b) => ORD.indexOf(a.grp) - ORD.indexOf(b.grp) || String(a.name).localeCompare(String(b.name), "ar") || (b.len || 0) - (a.len || 0));
+  return { slats: S1, box: S2, parts: S3 };
+}
+
 // ---------------- discounts (added on top; never changes prices or quantities) ----------------
 // Three independent sections + one extra discount on the invoice total (after the section discounts).
 const DISCOUNT_SECTIONS = [["slats", "الشرائح"], ["boxes", "العلب (البوكس)"], ["motors", "المواتير"]];
@@ -1015,17 +1101,19 @@ function orderStatus(results, soloRows) {
 
 return { DEFAULT_SETTINGS, SETTING_META, ITEMS, BASES, HAS_FOAM, COLORS, MOTOR_TYPES, MOTOR_CODE, MOTOR_LOADS,
   BOX_TABLES, BOX_SIZES, PRICE_LIST, buildPrices, itemFor, computeOpening, orderStatus,
-  DISCOUNT_SECTIONS, sectionOf, discountAmount, computeDiscounts };
+  DISCOUNT_SECTIONS, sectionOf, discountAmount, computeDiscounts, cuttingSheets };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = SH_ENGINE;
 </script>
 <script>/* SH Pricing – screens. All calculations come from engine.js; all disk access goes through window.shApi (preload.js). */
 "use strict";
 const E = window.SH_ENGINE || SH_ENGINE;
-const { DEFAULT_SETTINGS, SETTING_META, ITEMS, BASES, HAS_FOAM, COLORS, MOTOR_TYPES, MOTOR_LOADS, MOTOR_CODE, BOX_TABLES, BOX_SIZES, PRICE_LIST, computeOpening, orderStatus, DISCOUNT_SECTIONS, computeDiscounts } = E;
+const { DEFAULT_SETTINGS, SETTING_META, ITEMS, BASES, HAS_FOAM, COLORS, MOTOR_TYPES, MOTOR_LOADS, MOTOR_CODE, BOX_TABLES, BOX_SIZES, PRICE_LIST, computeOpening, orderStatus, DISCOUNT_SECTIONS, computeDiscounts, cuttingSheets } = E;
 const api = window.shApi;
 const IS_WEB = !!window.SH_WEB; // single-file browser edition
-const IS_CUSTOMER = !!window.SH_CUSTOMER; // customer phone edition: prices locked, published by SH
+const IS_SALES = !!window.SH_SALES;       // SH sales team edition: SH prices locked, quote + factory cutting
+const IS_CUSTOMER = !!window.SH_CUSTOMER;
+const LOCKED = IS_CUSTOMER || IS_SALES;   // prices come from SH, no admin on this device // customer phone edition: prices locked, published by SH
 
 const $ = s => document.querySelector(s);
 const fmt = (v, d = 2) => typeof v === "number" ? v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }) : v;
@@ -1366,9 +1454,9 @@ function renderQuote(calc) {
   $("#quoteBanner").innerHTML = st === "مكتمل" ? `<div class="banner ok">عرض السعر مكتمل.</div>`
     : `<div class="banner ${st.startsWith("غير مكتمل") ? "warn" : "bad"}">${esc(st)} – لا يُعتمد هذا العرض قبل استكماله.</div>`;
   const miss = missingItems(calc);
-  $("#quoteMissing").hidden = !miss.length || IS_CUSTOMER;
-  if (IS_CUSTOMER && miss.length) $("#quoteBanner").insertAdjacentHTML("beforeend", `<div class="banner warn" style="margin-top:8px">أسعار مش متاحة لسه: ${miss.map(m => esc(m.name)).join("، ")}. تواصل مع SH للسعر.</div>`);
-  if (miss.length && !IS_CUSTOMER) {
+  $("#quoteMissing").hidden = !miss.length || LOCKED;
+  if (LOCKED && miss.length) $("#quoteBanner").insertAdjacentHTML("beforeend", `<div class="banner warn" style="margin-top:8px">أسعار مش متاحة لسه: ${miss.map(m => esc(m.name)).join("، ")}. تواصل مع SH للسعر.</div>`);
+  if (miss.length && !LOCKED) {
     const open = {}; $("#quoteMissing").querySelectorAll("input[data-mk]").forEach(i => open[i.dataset.mk] = i.value);
     $("#missRows").innerHTML = miss.map(m => `<div class="price-row"><div>${esc(m.name)}<div class="src">مطلوب في الأوردر: ${fmt(m.qty)} ${esc(m.unit)}</div></div><div class="note">${esc(m.unit)}</div>
       <input type="text" inputmode="decimal" autocomplete="off" data-mk="${m.key}" placeholder="اكتب السعر" aria-label="سعر ${esc(m.name)}" value="${esc(open[m.key] || "")}"></div>`).join("");
@@ -1428,8 +1516,8 @@ async function ensureAdmin() {
   if (ok) { meta.hasPassword = true; meta.unlocked = true; }
   return !!ok;
 }
-function pdfDocument(calc) {
-  const css = `@font-face{font-family:Plex;src:url("{{FONT_DIR}}/IBMPlexSansArabic-Regular.ttf");font-weight:400}
+function pdfCss() {
+  return `@font-face{font-family:Plex;src:url("{{FONT_DIR}}/IBMPlexSansArabic-Regular.ttf");font-weight:400}
   @font-face{font-family:Plex;src:url("{{FONT_DIR}}/IBMPlexSansArabic-Bold.ttf");font-weight:700}
   body{font-family:Plex,Tahoma,sans-serif;color:#1f2124;margin:0;direction:rtl;font-size:12px}
   .qh{display:flex;justify-content:space-between;border-bottom:3px solid #f2c230;padding-bottom:10px;margin-bottom:12px}
@@ -1438,7 +1526,12 @@ function pdfDocument(calc) {
   th{color:#6b6f75}td.n{white-space:nowrap}td.miss{color:#b3261e;font-weight:700}
   tr.hd td{background:#e2edf7;font-weight:700}tr.sub td{background:#f4f3ef;font-weight:700}tr.grand td{background:#34383d;color:#fff;font-weight:700;font-size:14px}
   tr.disc td{color:#2f7d4f;font-weight:700}tr{page-break-inside:avoid}.warn{background:#fbe4e2;color:#b3261e;padding:8px 12px;border-radius:6px;font-weight:700;margin-bottom:10px}
-  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}`;
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pb{page-break-before:always}.sheet h1{font-size:18px;margin:8px 0 4px}.meta{display:flex;gap:4px 20px;flex-wrap:wrap;margin:6px 0}
+  .ded{font-size:11px;color:#6b6f75;margin:4px 0 0}.big{font-size:15px;font-weight:700}.sign{display:flex;justify-content:space-between;margin-top:26px;font-size:12px}`;
+}
+function pdfDocument(calc) {
+  const css = pdfCss();
   const warn = calc.status === "مكتمل" ? "" : `<div class="warn">تنبيه: ${esc(calc.status)} – لا يُعتمد هذا العرض قبل استكماله</div>`;
   return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>عرض سعر ${esc(order.no || "")}</title><style>${css}</style></head><body>${warn}${quoteHTML(calc)}</body></html>`;
 }
@@ -1507,6 +1600,90 @@ function renderTakeoff(calc) {
     : `<tbody><tr><td>مفيش خامات لسه – ضيف فتحة في الأوردر.</td></tr></tbody>`;
 }
 
+// ---------------- factory cutting sheets ----------------
+const CUT_SHEETS = [["slats", "ورقة الشرايح (الحصيرة)"], ["box", "ورقة البوكس"], ["parts", "ورقة الطنبور والمجاري والموتور والإكسسوارات"]];
+function cutData(calc) {
+  const res = calc.results.map(r => r.item ? { ...r, lines: r.lines1 || r.lines } : r);
+  return cuttingSheets(res, order.openings, settings, k => (PBY[k] ? PBY[k].name : k));
+}
+function cutDed(kind) {
+  const s = k => fmt(+settings[k], 0) + " سم";
+  if (kind === "slats") return `عرض الحصيرة = عرض الفتحة − ${s("cutSlW")} · ارتفاع الحصيرة = ارتفاع الفتحة − ${s("cutSlH")}`;
+  if (kind === "box") return `طول البوكس = عرض الفتحة − ${s("cutBox")} · فرش البوكس قطعتين بطول البوكس`;
+  return `طول الطنبور = عرض الفتحة − ${s("cutTube")} · طول المجرى وفرش المجرى = ارتفاع الفتحة − ${s("cutCh")}`;
+}
+function cutSheetHTML(kind, title, rows, withHead) {
+  const d = order.date ? order.date.split("-").reverse().join("/") : "";
+  const nOp = calcAll().results.reduce((a, r) => a + (r.item ? r.qty : 0), 0);
+  const head = `<div class="qh"><div><div class="co">إس إتش للصناعات المعدنية</div><div>أمر تشغيل – تقطيع المصنع</div></div><div class="ct">SH Metal Industries</div></div>`;
+  const meta = `<div class="meta"><div>العميل: <b>${esc(order.customer || "—")}</b></div><div>رقم العرض: <b>${esc(order.no || "—")}</b></div><div>التاريخ: <b>${esc(d)}</b></div><div>عدد الفتحات: <b>${nOp}</b></div></div>`;
+  const L = v => v == null ? "" : fmt(v, v % 1 ? 1 : 0);
+  let tbl = "";
+  if (kind === "slats") {
+    let tc = 0, ts = 0, ta = 0;
+    const tr = rows.map((x, i) => { tc += x.count; ts += x.count * x.slats; ta += x.w * x.h * x.count / 10000;
+      return `<tr><td class="n">${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.color)}</td><td class="n big">${L(x.w)}</td><td class="n big">${L(x.h)}</td><td class="n">${x.slats}</td><td class="n big">${x.count}</td><td class="n">${x.count * x.slats}</td><td class="note">${esc(x.refs)}</td></tr>`; }).join("");
+    tbl = `<table><thead><tr><th>م</th><th>نوع الشريحة</th><th>اللون</th><th>عرض الحصيرة (سم)</th><th>ارتفاع الحصيرة (سم)</th><th>شرايح الحصيرة</th><th>عدد الحصاير</th><th>إجمالي الشرايح</th><th>الفتحات</th></tr></thead>
+      <tbody>${tr}<tr class="sub"><td colspan="6">الإجمالي – مساحة ${fmt(ta)} م²</td><td class="n">${tc}</td><td class="n">${ts}</td><td></td></tr></tbody></table>`;
+  } else if (kind === "box") {
+    const bx = rows.filter(x => x.kind === "box"), br = rows.filter(x => x.kind === "brush"), st = rows.filter(x => x.kind === "set");
+    tbl = `<table><thead><tr><th>م</th><th>البوكس</th><th>اللون</th><th>طول القص (سم)</th><th>العدد</th><th>الفتحات</th></tr></thead><tbody>
+      ${bx.map((x, i) => `<tr><td class="n">${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.color)}</td><td class="n big">${L(x.len)}</td><td class="n big">${x.count}</td><td class="note">${esc(x.refs)}</td></tr>`).join("")}
+      <tr class="sub"><td colspan="4">إجمالي البوكسات</td><td class="n">${bx.reduce((a, x) => a + x.count, 0)}</td><td></td></tr>
+      ${br.length ? `<tr class="hd"><td colspan="6">فرش البوكس</td></tr>` + br.map((x, i) => `<tr><td class="n">${i + 1}</td><td>${esc(x.name)}</td><td></td><td class="n big">${L(x.len)}</td><td class="n big">${x.count}</td><td class="note">${esc(x.refs)}</td></tr>`).join("") : ""}
+      ${st.length ? `<tr class="hd"><td colspan="6">الأجناب وأطقم الأحمال</td></tr>` + st.map((x, i) => `<tr><td class="n">${i + 1}</td><td colspan="3">${esc(x.name)}</td><td class="n big">${x.count}</td><td class="note">${esc(x.refs)}</td></tr>`).join("") : ""}
+      </tbody></table>`;
+  } else {
+    let g = "", n = 0;
+    const tr = rows.map(x => {
+      let h = "";
+      if (x.grp !== g) { g = x.grp; n = 0; h = `<tr class="hd"><td colspan="6">${esc(g)}</td></tr>`; }
+      n++;
+      const unit = x.len != null ? "قطعة" : (PBY[x.key] ? PBY[x.key].unit : "");
+      return h + `<tr><td class="n">${n}</td><td>${esc(x.name)}${x.color ? " – " + esc(x.color) : ""}</td><td class="n big">${x.len != null ? L(x.len) : "—"}</td><td class="n big">${fmt(x.count, x.count % 1 ? 2 : 0)}</td><td>${esc(unit)}</td><td class="note">${esc(x.refs)}</td></tr>`;
+    }).join("");
+    tbl = `<table><thead><tr><th>م</th><th>الصنف</th><th>طول القص (سم)</th><th>العدد</th><th>الوحدة</th><th>الفتحات</th></tr></thead><tbody>${tr}</tbody></table>`;
+  }
+  const empty = !rows.length ? `<p class="note">مفيش بنود في الورقة دي.</p>` : "";
+  return `<div class="sheet">${withHead ? head : ""}<h1>${esc(title)}</h1>${meta}<div class="ded">${esc(cutDed(kind))}</div>${empty || `<div class="tbl-wrap">${tbl}</div>`}
+    <div class="sign"><div>القائم بالتقطيع: ................</div><div>المراجعة: ................</div><div>التاريخ: ........</div></div></div>`;
+}
+function cutText(kind, title, rows) {
+  const L = v => v == null ? "" : fmt(v, v % 1 ? 1 : 0);
+  const out = [`${title} – أمر تشغيل SH`, `العميل: ${order.customer || "—"} | رقم العرض: ${order.no || "—"} | التاريخ: ${order.date || ""}`, cutDed(kind), ""];
+  rows.forEach((x, i) => {
+    if (kind === "slats") out.push(`${i + 1}) ${x.name} – ${x.color}: ${L(x.w)} × ${L(x.h)} سم – ${x.count} حصيرة (${x.slats} شريحة للحصيرة) [${x.refs}]`);
+    else if (x.len != null) out.push(`${i + 1}) ${x.name}${x.color ? " – " + x.color : ""}: طول ${L(x.len)} سم × ${x.count} [${x.refs}]`);
+    else out.push(`${i + 1}) ${x.name}: ${fmt(x.count, x.count % 1 ? 2 : 0)} ${PBY[x.key] ? PBY[x.key].unit : ""} [${x.refs}]`);
+  });
+  return out.join("\n");
+}
+function renderCut(calc) {
+  const data = cutData(calc);
+  $("#cutNote").textContent = "الورق ده للمصنع بس – مقاسات القص بعد الخصومات، وملوش علاقة بالأسعار. كل ورقة تتبعت للقسم بتاعها. الأرقام بتاخد في اعتبارها أي تعديل يدوي في الفتحات.";
+  $("#cutSheets").innerHTML = CUT_SHEETS.map(([k, t]) => `<div class="panel cut-sheet">
+      <div class="toolbar"><button class="btn primary" type="button" data-cut="${k}">PDF ${esc(t)}</button><button class="btn" type="button" data-cutcopy="${k}">نسخ كنص (واتساب)</button></div>
+      ${cutSheetHTML(k, t, data[k], false)}</div>`).join("");
+}
+async function cutPdf(kind) {
+  const calc = calcAll(); const data = cutData(calc);
+  if (!calc.results.some(r => r.item)) { toast("مفيش فتحات في الأوردر"); return; }
+  const list = kind === "all" ? CUT_SHEETS : CUT_SHEETS.filter(([k]) => k === kind);
+  const body = list.map(([k, t], i) => `<div class="${i ? "pb" : ""}">${cutSheetHTML(k, t, data[k], true)}</div>`).join("");
+  const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقطيع ${esc(order.no || "")}</title><style>${pdfCss()}</style></head><body>${body}</body></html>`;
+  const nm = (kind === "all" ? "تقطيع المصنع" : list[0][1].replace(/[()]/g, "")) + ` ${order.no || ""} ${order.customer || ""}`;
+  if (IS_WEB) toast("بجهّز ملف الـ PDF…");
+  const r = await safe(() => api.savePdf(html, nm.trim().replace(/\s+/g, " ") + ".pdf"));
+  if (r && r.path) toast(IS_WEB ? "اتحفظ الـ PDF في التنزيلات (Downloads): " + r.path : "اتحفظ الـ PDF: " + r.path);
+  if (r && r.shared) toast("اتعمل ملف الـ PDF");
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-cut],[data-cutcopy]"); if (!b) return;
+  if (b.dataset.cut) return cutPdf(b.dataset.cut);
+  const k = b.dataset.cutcopy, t = CUT_SHEETS.find(x => x[0] === k)[1];
+  try { await navigator.clipboard.writeText(cutText(k, t, cutData(calcAll())[k])); toast("اتنسخت الورقة – الصقها في الواتساب"); } catch (err) { toast("ماقدرتش أنسخ"); }
+});
+
 // ---------------- admin lock ----------------
 function lockBox() {
   if (!meta.hasPassword) return `<div class="lockbar"><b>اعمل كلمة سر المدير:</b> هي اللي بتسمح بتعديل الأسعار والإعدادات.
@@ -1530,9 +1707,9 @@ const canEdit = () => meta.hasPassword && meta.unlocked;
 
 // ---------------- prices page ----------------
 function renderPrices() {
-  $("#priceLock").innerHTML = IS_CUSTOMER ? "" : lockBox();
+  $("#priceLock").innerHTML = LOCKED ? "" : lockBox();
   const when = meta.pricesUpdatedAt ? (() => { const d = new Date(meta.pricesUpdatedAt); if (isNaN(d)) return String(meta.pricesUpdatedAt); const p = x => String(x).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; })() : null;
-  if (IS_CUSTOMER) { $("#priceInfo").textContent = when ? `أسعار SH الرسمية – آخر تحديث: ${when}. الأسعار بتتحدّث لوحدها كل ما تفتح البرنامج والنت شغال.` : "أسعار الليستة. افتح البرنامج والنت شغال عشان ياخد آخر أسعار من SH."; }
+  if (LOCKED) { $("#priceInfo").textContent = when ? `أسعار SH الرسمية – آخر تحديث: ${when}. الأسعار بتتحدّث لوحدها كل ما تفتح البرنامج والنت شغال.` : "أسعار الليستة. افتح البرنامج والنت شغال عشان ياخد آخر أسعار من SH."; }
   else $("#priceInfo").textContent = when ? `آخر تحديث للأسعار على الجهاز ده: ${when}${meta.pricesSource ? " (" + meta.pricesSource + ")" : ""}. الخانة الحمرا = سعر غير مسجل.` : "الأسعار دي أسعار الليستة الأصلية. الخانة الحمرا = سعر غير مسجل.";
   const q = $("#pSearch").value.trim(), onlyMiss = $("#pMissing").checked;
   const eff = effPrices();
@@ -1596,6 +1773,7 @@ function renderSettings() {
     "الحصيرة = (عرض الفتحة − 11 سم) × (ارتفاع الفتحة − 10 سم)، والسعر على مساحة الحصيرة. بدون أي خصم.",
     "البوكس: أصغر بوكس أقصى ارتفاعه ≥ ارتفاع الفتحة من جدول الشريحة، وطوله = عرض الفتحة. البوكس متسعّر بفرش.",
     "طقم أجناب البوكس (يمين + شمال) واحد لكل فتحة بمقاس البوكس. مع بوكس 30 بيبقى طقم أحمال تلقائي.",
+    "التقطيع للمصنع: الحصيرة = عرض الفتحة − 11 سم × ارتفاع الفتحة − 10 سم، البوكس = العرض − 1 سم، الطنبور = العرض − 5 سم، المجرى وفرشه = الارتفاع − 10 سم. الخصومات دي للتقطيع بس ومتتغيرش من الإعدادات، وملهاش علاقة بالأسعار.",
     "تعديل يدوي: من \"تعديل يدوي\" في كل فتحة تقدر تغيّر البوكس أو الطنبور أو قدرة الموتور، وتغيّر صنف أي بند أو كميته أو تشيله، وتضيف بنود زيادة. الكميات للفتحة الواحدة وبتتضرب في العدد. زرار \"رجّع كل الفتحة للتلقائي\" بيلغي التعديلات.",
     "الطنبور 6 سم، و7 سم لو عرض الفتحة أكبر من 4 م أو وزن الحصيرة أكبر من 38 كجم. الشيلد والإيرو 7 ثابت. طوله = عرض الفتحة (وطنبور 7 فوق 2.90 م عود كامل 5.80).",
     "المجرى يمين + شمال = (ارتفاع الفتحة − 10 سم) × 2: شيلد وألترا وإيرو عريض، بروكس و5 سم عادي (وسط). فرش المجاري 4 قطع × ارتفاع المجرى.",
@@ -1610,10 +1788,10 @@ function renderSettings() {
 }
 
 // ---------------- master render ----------------
-const VIEWS = ["order", "quote", "saved", "takeoff", "prices", "rules", "company", "help"];
+const VIEWS = ["order", "quote", "saved", "takeoff", "cut", "prices", "rules", "company", "help"];
 // Page switching does not depend on the address bar (some phone browsers block it for local files).
 let viewName = (() => { try { const h = location.hash.slice(1); return VIEWS.includes(h) ? h : "order"; } catch (e) { return "order"; } })();
-function currentView() { return (IS_CUSTOMER && viewName === "rules") || (!IS_CUSTOMER && viewName === "company") ? "order" : viewName; }
+function currentView() { return ((IS_CUSTOMER || IS_SALES) && viewName === "rules") || (!IS_CUSTOMER && viewName === "company") || (IS_CUSTOMER && viewName === "cut") ? "order" : viewName; }
 function go(v) {
   if (!VIEWS.includes(v)) return;
   viewName = v;
@@ -1639,6 +1817,7 @@ function renderInner() {
   if (v === "quote") renderQuote(calc);
   if (v === "saved") renderSaved();
   if (v === "takeoff") renderTakeoff(calc);
+  if (v === "cut") renderCut(calc);
   if (v === "prices") renderPrices();
   if (v === "rules") renderSettings();
   if (v === "company") renderCompany();
@@ -2027,7 +2206,9 @@ if (IS_CUSTOMER) {
   $("#coBackup").onclick = async () => { const r = await safe(() => api.createBackup()); if (r && r.path) toast("اتحفظت النسخة الاحتياطية في التنزيلات (Downloads)"); };
   $("#coRestore").onclick = async () => { const r = await safe(() => api.restoreBackup()); if (r && r.state) { applyState(r.state); company = await api.getCompany(); await refreshQuotes(); const d = await safe(() => api.getDraft()); if (d && d.order) { order = d.order; dirty = !!d.dirty; bindCustomer(); } render(); toast(`اتسترجعت النسخة: ${r.quotes} عرض`); } };
 }
-if (IS_CUSTOMER) {
+if (IS_CUSTOMER) document.querySelector('nav.tabs a[data-view="cut"]').hidden = true;
+if (IS_SALES) { document.title = "SH تسعير – نسخة السيلز"; const h = document.querySelector("header .brand, header h1"); if (h) h.insertAdjacentHTML("beforeend", ` <span class="chip info">سيلز</span>`); }
+if (LOCKED) {
   // hide everything that only the SH office needs
   document.querySelector('nav.tabs a[data-view="rules"]').hidden = true;
   for (const id of ["savePrices", "importPrices", "exportPrices", "resetPrices"]) $("#" + id).hidden = true;
