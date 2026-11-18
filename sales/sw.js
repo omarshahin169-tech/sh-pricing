@@ -1,5 +1,5 @@
 /* SH sales app – works offline after the first visit. Page and prices: network first. */
-const CACHE = "sh-sales-1.0.0-20261118095529";
+const CACHE = "sh-sales-1.0.0-20261118095554";
 const FILES = ["./", "index.html", "manifest.json", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
